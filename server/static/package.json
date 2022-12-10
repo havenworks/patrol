@@ -1,0 +1,10 @@
+{
+  "name": "patrol-login",
+  "license": "MIT",
+  "scripts": {
+    "fix": "standard --fix"
+  },
+  "devDependencies": {
+    "standard": "^17.0.0"
+  }
+}
