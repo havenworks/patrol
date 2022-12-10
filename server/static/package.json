@@ -2,7 +2,7 @@
   "name": "patrol-login",
   "license": "MIT",
   "scripts": {
-    "fix": "standard --fix"
+    "fix": "standard --fix || true"
   },
   "devDependencies": {
     "standard": "^17.0.0"
