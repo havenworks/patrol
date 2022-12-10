@@ -18,6 +18,7 @@ use poem::web::Data;
 use poem::Result;
 use poem_openapi::auth::Basic;
 use poem_openapi::param::Path;
+use poem_openapi::payload::Binary;
 use poem_openapi::SecurityScheme;
 use poem_openapi::{payload::Json, ApiResponse, Object, OpenApi};
 use sea_orm::prelude::DateTimeUtc;
@@ -177,8 +178,10 @@ impl UserApi {
         Ok(ChangePasswordResponse::NotFound)
     }
 
-    // #[oai(path = "/login", method = "post")]
-    // async fn login(&self, )
+    #[oai(path = "/login", method = "post")]
+    async fn login(&self, password: Binary) -> Json<String> {
+        Ok(Json("logged in".to_string()))
+    }
 }
 
 async fn hash_password(password: &[u8]) -> anyhow::Result<String> {
