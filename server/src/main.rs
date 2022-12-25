@@ -1,7 +1,9 @@
 use anyhow;
 use dotenv::dotenv;
-use poem::{listener::TcpListener, EndpointExt, Route};
+use poem::{error::NotFoundError, listener::TcpListener, EndpointExt, Response, Route};
 use poem_openapi::OpenApiService;
+use reqwest::StatusCode;
+use rust_embed::RustEmbed;
 use sea_orm::DatabaseConnection;
 use std::{
     env,
@@ -25,11 +27,17 @@ pub struct FirstAdminRegistered {
     lock: Arc<RwLock<bool>>,
 }
 
+#[derive(RustEmbed)]
+#[folder = "static"]
+pub struct Static;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenv()?;
 
     pretty_env_logger::init();
+
+    let index_html = Static::get("index.html").unwrap().data.to_vec();
 
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL is not set in .env file");
     let conn = sea_orm::Database::connect(db_url)
@@ -55,7 +63,15 @@ async fn main() -> anyhow::Result<()> {
                 .data(db::is_first_admin_registered(&Db { conn }).await?)
                 .data(jwks)
                 .data(jwks_value),
-        );
+        )
+        .catch_error(move |_: NotFoundError| {
+            let index_html_file = index_html.clone();
+            async move {
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .body(index_html_file)
+            }
+        });
 
     poem::Server::new(TcpListener::bind(&SocketAddr::from(([127, 0, 0, 1], 8000))))
         .run(app)

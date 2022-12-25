@@ -16,7 +16,7 @@ pub fn generate_keys() -> (PatrolJwkSet, PatrolJwkSetValue) {
     let mut rng = rand::thread_rng();
     let mut jwks: Vec<Jwk> = Vec::new();
 
-    for k in 0..6 {
+    for k in 0..2 {
         println!("{}", k);
         let private_key = RsaPrivateKey::new(&mut rng, BITS).unwrap();
         let public_key = RsaPublicKey::from(private_key);

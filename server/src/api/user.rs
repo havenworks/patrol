@@ -16,10 +16,7 @@ use chrono::Utc;
 use poem::error::InternalServerError;
 use poem::web::Data;
 use poem::Result;
-use poem_openapi::auth::Basic;
 use poem_openapi::param::Path;
-use poem_openapi::payload::Binary;
-use poem_openapi::SecurityScheme;
 use poem_openapi::{payload::Json, ApiResponse, Object, OpenApi};
 use sea_orm::prelude::DateTimeUtc;
 use sea_orm::{ActiveModelBehavior, ActiveModelTrait, Set, TransactionTrait};
@@ -32,7 +29,6 @@ pub struct UserApi;
 struct NewUser {
     #[oai(validator(max_length = 64))]
     username: String,
-    // is_admin: bool,
     #[oai(validator(max_length = 32))]
     first_name: String,
     #[oai(validator(max_length = 64))]
@@ -179,8 +175,8 @@ impl UserApi {
     }
 
     #[oai(path = "/login", method = "post")]
-    async fn login(&self, password: Binary) -> Json<String> {
-        Ok(Json("logged in".to_string()))
+    async fn login(&self) -> Json<String> {
+        Json("logged in".to_string())
     }
 }
 
