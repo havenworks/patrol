@@ -46,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
 
     db::run_migrations().await?;
 
-    let (jwks, jwks_value) = keys::generate_keys();
+    let (private_key, jwks_value) = keys::generate_keys();
 
     let service = OpenApiService::new(api::SERVICES, "Patrol", env!("CARGO_PKG_VERSION"))
         .server("https://patrol");
@@ -61,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
             service
                 .data(Db { conn: conn.clone() })
                 .data(db::is_first_admin_registered(&Db { conn }).await?)
-                .data(jwks)
+                .data(private_key)
                 .data(jwks_value),
         )
         .catch_error(move |_: NotFoundError| {

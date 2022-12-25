@@ -1,3 +1,4 @@
+use crate::keys::PatrolRsaKey;
 use crate::models::users_roles;
 use crate::Db;
 use crate::{models::users, FirstAdminRegistered};
@@ -17,7 +18,8 @@ use poem::error::InternalServerError;
 use poem::web::Data;
 use poem::Result;
 use poem_openapi::param::Path;
-use poem_openapi::{payload::Json, ApiResponse, Object, OpenApi};
+use poem_openapi::{payload::Json, ApiResponse, Enum, Object, OpenApi};
+use rsa::padding::PaddingScheme;
 use sea_orm::prelude::DateTimeUtc;
 use sea_orm::{ActiveModelBehavior, ActiveModelTrait, Set, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -47,7 +49,9 @@ enum CreateUserResponse {
 
 #[derive(Object)]
 struct UserLogin {
+    #[oai(validator(max_length = 64))]
     username: String,
+    #[oai(validator(max_length = 4096))]
     password: String,
 }
 
@@ -55,8 +59,10 @@ struct UserLogin {
 enum LoginResponse {
     #[oai(status = 200)]
     LoggedIn,
+    #[oai(status = 404)]
+    NotFound,
     #[oai(status = 401)]
-    Unauthorized,
+    Unauthorized(Json<WrongPasswordData>),
 }
 
 #[derive(Object)]
@@ -75,9 +81,17 @@ enum ChangePasswordResponse {
     NotFound,
 }
 
-#[derive(Object, Serialize, Deserialize)]
+#[derive(Object, Deserialize)]
 struct WrongPasswordData {
-    changed_at: DateTimeUtc,
+    reason: WrongPasswordError,
+    #[oai(skip_serializing_if_is_none = true)]
+    changed_at: Option<DateTimeUtc>,
+}
+
+#[derive(Debug, Enum, Serialize, Deserialize)]
+pub enum WrongPasswordError {
+    Failed,
+    ChangedAt,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -151,9 +165,8 @@ impl UserApi {
             .map_err(InternalServerError)?
             .ok_or(ChangePasswordResponse::NotFound)?;
 
-        match verify_password(user.clone(), change_password.old_password.as_bytes()).await? {
-            PasswordVerification::Failed => {}
-            PasswordVerification::ChangedAt(_) => {}
+        // TODO: Michal, finish implementing this, or the   c r a b   will haunt you!
+        match verify_password(user.clone(), change_password.old_password.as_bytes())? {
             _ => {}
         }
 
@@ -175,8 +188,30 @@ impl UserApi {
     }
 
     #[oai(path = "/login", method = "post")]
-    async fn login(&self) -> Json<String> {
-        Json("logged in".to_string())
+    async fn login(
+        &self,
+        user_login: Json<UserLogin>,
+        private_key: Data<&PatrolRsaKey>,
+        db: Data<&Db>,
+    ) -> Result<LoginResponse> {
+        let user = users::find_by_username(user_login.username.clone())
+            .one(&db.conn)
+            .await
+            .map_err(InternalServerError)?
+            .ok_or(LoginResponse::NotFound)?;
+
+        let encrypted_password =
+            base64::decode(user_login.password.clone()).map_err(InternalServerError)?;
+
+        let password = (*private_key)
+            .0
+            .decrypt(PaddingScheme::PKCS1v15Encrypt, &encrypted_password)
+            .map_err(InternalServerError)?;
+
+        Ok(match verify_password(user, &password)? {
+            Ok(()) => LoginResponse::LoggedIn,
+            Err(error) => LoginResponse::Unauthorized(Json(error)),
+        })
     }
 }
 
@@ -190,19 +225,15 @@ async fn hash_password(password: &[u8]) -> anyhow::Result<String> {
     Ok(password_hash)
 }
 
-#[derive(Debug)]
-pub enum PasswordVerification {
-    Succeeded,
-    Failed,
-    ChangedAt(DateTimeUtc),
-}
-
-async fn verify_password(user: users::Model, password: &[u8]) -> Result<PasswordVerification> {
+fn verify_password(
+    user: users::Model,
+    password: &[u8],
+) -> Result<std::result::Result<(), WrongPasswordData>> {
     let hash =
         PasswordHash::new(&user.password_hash).map_err(|_| anyhow!("Failed to parse hash"))?;
 
     if let Ok(_) = Argon2::default().verify_password(password, &hash) {
-        return Ok(PasswordVerification::Succeeded);
+        return Ok(Ok(()));
     }
 
     // If password has been changed
@@ -211,9 +242,15 @@ async fn verify_password(user: users::Model, password: &[u8]) -> Result<Password
             .map_err(|_| anyhow!("Failed to parse hash"))?;
 
         if let Ok(_) = Argon2::default().verify_password(password, &hash_previous) {
-            return Ok(PasswordVerification::ChangedAt(user.password_changed_at));
+            return Ok(Err(WrongPasswordData {
+                reason: WrongPasswordError::ChangedAt,
+                changed_at: Some(user.password_changed_at),
+            }));
         }
     }
 
-    Ok(PasswordVerification::Failed)
+    Ok(Err(WrongPasswordData {
+        reason: WrongPasswordError::Failed,
+        changed_at: None,
+    }))
 }
