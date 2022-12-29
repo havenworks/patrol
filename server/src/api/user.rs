@@ -1,4 +1,5 @@
-use crate::keys::PatrolRsaKey;
+use std::ops::Deref;
+
 use crate::models::users_roles;
 use crate::Db;
 use crate::{models::users, FirstAdminRegistered};
@@ -19,7 +20,6 @@ use poem::web::Data;
 use poem::Result;
 use poem_openapi::param::Path;
 use poem_openapi::{payload::Json, ApiResponse, Enum, Object, OpenApi};
-use rsa::padding::PaddingScheme;
 use sea_orm::prelude::DateTimeUtc;
 use sea_orm::{ActiveModelBehavior, ActiveModelTrait, Set, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ struct NewUser {
     first_name: String,
     #[oai(validator(max_length = 64))]
     last_name: String,
-    #[oai(validator(max_length = 1024))]
+    #[oai(validator(max_length = 131072))]
     password: String,
 }
 
@@ -136,6 +136,7 @@ impl UserApi {
         .into();
 
         if is_admin {
+            println!("ehllo");
             users_roles::ActiveModel {
                 user_id: Set(user.id),
                 role_name: Set("admin".to_string()),
@@ -188,30 +189,19 @@ impl UserApi {
     }
 
     #[oai(path = "/login", method = "post")]
-    async fn login(
-        &self,
-        user_login: Json<UserLogin>,
-        private_key: Data<&PatrolRsaKey>,
-        db: Data<&Db>,
-    ) -> Result<LoginResponse> {
+    async fn login(&self, user_login: Json<UserLogin>, db: Data<&Db>) -> Result<LoginResponse> {
         let user = users::find_by_username(user_login.username.clone())
             .one(&db.conn)
             .await
             .map_err(InternalServerError)?
             .ok_or(LoginResponse::NotFound)?;
 
-        let encrypted_password =
-            base64::decode(user_login.password.clone()).map_err(InternalServerError)?;
-
-        let password = (*private_key)
-            .0
-            .decrypt(PaddingScheme::PKCS1v15Encrypt, &encrypted_password)
-            .map_err(InternalServerError)?;
-
-        Ok(match verify_password(user, &password)? {
-            Ok(()) => LoginResponse::LoggedIn,
-            Err(error) => LoginResponse::Unauthorized(Json(error)),
-        })
+        Ok(
+            match verify_password(user, user_login.password.as_bytes())? {
+                Ok(()) => LoginResponse::LoggedIn,
+                Err(error) => LoginResponse::Unauthorized(Json(error)),
+            },
+        )
     }
 }
 

@@ -18,7 +18,7 @@ use std::{
 
 mod api;
 mod db;
-mod keys;
+// mod keys;
 mod models;
 // mod util;
 
@@ -72,9 +72,6 @@ async fn main() -> anyhow::Result<()> {
     info!("{} Running database migrations", Emoji("🗃 ", ""));
     db::run_migrations().await?;
 
-    info!("{} Generating keys", Emoji("🔑", ""));
-    let (private_key, jwks_value) = keys::generate_keys();
-
     let service = OpenApiService::new(api::SERVICES, "Patrol", env!("CARGO_PKG_VERSION"))
         .server("https://patrol");
 
@@ -87,9 +84,7 @@ async fn main() -> anyhow::Result<()> {
             "/",
             service
                 .data(Db { conn: conn.clone() })
-                .data(db::is_first_admin_registered(&Db { conn }).await?)
-                .data(private_key)
-                .data(jwks_value),
+                .data(db::is_first_admin_registered(&Db { conn }).await?),
         )
         // Static assets
         .nest("/static", EmbeddedFilesEndpoint::<Static>::new())

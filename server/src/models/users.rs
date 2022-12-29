@@ -17,7 +17,7 @@ pub struct Model {
     pub first_name: String,
     pub last_name: String,
 
-    pub profile_picure: Option<String>,
+    pub profile_picture: Option<String>,
 
     #[serde(skip_serializing)]
     pub password_hash: String,
@@ -52,6 +52,8 @@ impl ActiveModelBehavior for ActiveModel {
 
         Self {
             id: Set(Uuid::new_v4()),
+
+            profile_picture: Set(None),
 
             password_hash_previous: Set(None),
             password_changed_at: Set(now),

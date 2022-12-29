@@ -1,8 +1,10 @@
+use anyhow::anyhow;
 use jsonwebtoken::jwk::{
     self, CommonParameters, Jwk, JwkSet, KeyOperations, PublicKeyUse, RSAKeyParameters, RSAKeyType,
 };
-use rsa::{PublicKeyParts, RsaPrivateKey, RsaPublicKey};
+use rsa::{PaddingScheme, PublicKeyParts, RsaPrivateKey, RsaPublicKey};
 use serde_json::Value;
+use sha2::Sha256;
 
 const BITS: usize = 1024;
 
@@ -44,4 +46,16 @@ pub fn generate_keys() -> (PatrolRsaKey, PatrolJwkSetValue) {
         PatrolRsaKey(private_key),
         PatrolJwkSetValue(serde_json::to_value(jwks).unwrap()),
     )
+}
+
+pub fn decrypt_string(
+    encrypted_base64: String,
+    private_key: RsaPrivateKey,
+) -> anyhow::Result<String> {
+    let encrypted_string = base64::decode(encrypted_base64)?;
+
+    let padding_scheme = PaddingScheme::new_oaep::<Sha256>();
+
+    String::from_utf8(private_key.decrypt(padding_scheme, &encrypted_string)?)
+        .map_err(|_| anyhow!(""))
 }
