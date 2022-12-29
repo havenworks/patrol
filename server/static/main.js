@@ -9,5 +9,4 @@ const submit = document.getElementById('submit')
  */
 form.onsubmit = async (event) => {
   event.preventDefault()
-
 }

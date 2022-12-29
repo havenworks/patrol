@@ -3,4 +3,3 @@
 git_root=$(git rev-parse --show-toplevel)
 cd $git_root/server/static
 yarn run fix
-
