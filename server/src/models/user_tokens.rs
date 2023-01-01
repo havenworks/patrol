@@ -2,7 +2,7 @@ use crate::models;
 use sea_orm::{entity::prelude::*, Set};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "user_tokens")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false, unique)]

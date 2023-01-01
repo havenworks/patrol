@@ -1,4 +1,4 @@
-use anyhow;
+
 use console::{style, Emoji};
 use dotenv::dotenv;
 use log::info;
@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
     pretty_env_logger::init();
 
     let index_html = Static::get("index.html")
-        .expect(format!("Could not find {} in `static`", style("index.html").red()).as_str())
+        .unwrap_or_else(|| panic!("Could not find {} in `static`", style("index.html").red()))
         .data
         .to_vec();
 

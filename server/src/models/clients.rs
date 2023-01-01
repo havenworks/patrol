@@ -1,10 +1,10 @@
 use chrono::Utc;
 use poem_openapi::{Enum, Object};
-use sea_orm::{entity::prelude::*, IntoActiveValue, Set};
+use sea_orm::{entity::prelude::*, Set};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, DeriveEntityModel, Serialize, Deserialize, Object)]
+#[derive(Debug, Clone, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize, Object)]
 #[sea_orm(table_name = "clients")]
 #[oai(rename = "Client")]
 pub struct Model {
@@ -49,7 +49,7 @@ pub fn find_by_id(id: Uuid) -> Select<Entity> {
 
 // Grant types
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Enum)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Enum)]
 #[oai(rename_all = "snake_case")]
 pub enum GrantType {
     AuthCode,

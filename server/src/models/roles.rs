@@ -2,7 +2,7 @@ use poem_openapi::Object;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize, Object)]
+#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize, Object)]
 #[sea_orm(table_name = "roles")]
 #[oai(rename = "Role")]
 pub struct Model {

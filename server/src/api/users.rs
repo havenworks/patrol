@@ -132,8 +132,7 @@ impl UserApi {
         }
         .insert(&txn)
         .await
-        .map_err(InternalServerError)?
-        .into();
+        .map_err(InternalServerError)?;
 
         if is_admin {
             println!("ehllo");

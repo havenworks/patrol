@@ -36,8 +36,8 @@ fn req_db_pool(req: &Request) -> &Db {
 )]
 struct AuthUser(User);
 
-async fn auth_user(req: &Request, session_id: ApiKey) -> Option<User> {
-    let db = req_db_pool(req);
+async fn auth_user(req: &Request, _session_id: ApiKey) -> Option<User> {
+    let _db = req_db_pool(req);
     None
 }
 

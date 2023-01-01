@@ -9,8 +9,7 @@ use crate::{
 use poem::{
     error::{InternalServerError, Result},
     http::header,
-    http::status::StatusCode,
-    web::{headers::Header, Data, Path, Redirect},
+    web::{Data, Path},
     IntoResponse,
 };
 use poem_openapi::{payload::Response, ApiResponse, Enum, OpenApi};
@@ -52,14 +51,14 @@ impl OauthApi {
     async fn authorize(
         &self,
         client_id: Path<Uuid>,
-        redirect_uri: Path<String>,
+        _redirect_uri: Path<String>,
         response_type: Path<ResponseType>,
         db: Data<&Db>,
     ) -> Result<Response<AuthorizeResponse>> {
         let client = clients::find_by_id(*client_id)
             .one(&db.conn)
             .await
-            .map_err(|err| InternalServerError(err))?
+            .map_err(InternalServerError)?
             .ok_or(AuthorizeResponse::NotFound)?;
 
         if !client
@@ -69,7 +68,7 @@ impl OauthApi {
             return Ok(Response::new(AuthorizeResponse::GrantTypeNotAllowed));
         }
 
-        return Ok(Response::new(AuthorizeResponse::Redirect).header(header::LOCATION, "/"));
+        Ok(Response::new(AuthorizeResponse::Redirect).header(header::LOCATION, "/"))
 
         // Response::new(Ok(AuthorizeResponse::NotFound))
     }
