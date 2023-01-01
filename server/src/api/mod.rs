@@ -1,8 +1,8 @@
-use poem::Request;
+use poem::{error::InternalServerError, Request};
 use poem_openapi::{auth::ApiKey, SecurityScheme, Tags};
-use sea_orm::EntityTrait;
+use sea_orm::{ColumnTrait, EntityTrait, ModelTrait, QueryFilter};
 
-use crate::Db;
+use crate::{models::user_tokens, Db};
 
 use super::models::{self, users::Model as User};
 
@@ -30,22 +30,34 @@ fn req_db_pool(req: &Request) -> &Db {
 #[derive(SecurityScheme)]
 #[oai(
     type = "api_key",
-    key_name = "session",
     in = "cookie",
+    key_name = "_patrol_key",
     checker = "auth_user"
 )]
 struct AuthUser(User);
 
-async fn auth_user(req: &Request, _session_id: ApiKey) -> Option<User> {
-    let _db = req_db_pool(req);
-    None
+async fn auth_user(req: &Request, session_id: ApiKey) -> Option<User> {
+    let db = req_db_pool(req);
+
+    user_tokens::Entity::find_by_id(session_id.key)
+        .filter(user_tokens::Column::Valid.eq(true))
+        .one(&db.conn)
+        .await
+        .ok()
+        .flatten()?
+        // If a token is found, fetch the user
+        .find_related(models::users::Entity)
+        .one(&db.conn)
+        .await
+        .ok()
+        .flatten()
 }
 
 #[derive(SecurityScheme)]
 #[oai(
     type = "api_key",
-    key_name = "session",
     in = "cookie",
+    key_name = "_patrol_key",
     checker = "auth_admin"
 )]
 struct AuthAdmin(User);

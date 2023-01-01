@@ -34,6 +34,8 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(has_many = "super::roles::Entity")]
     Role,
+    #[sea_orm(has_many = "super::user_tokens::Entity")]
+    Token,
 }
 
 impl Related<super::roles::Entity> for Entity {
@@ -43,6 +45,12 @@ impl Related<super::roles::Entity> for Entity {
 
     fn via() -> Option<RelationDef> {
         Some(super::users_roles::Relation::User.def().rev())
+    }
+}
+
+impl Related<super::user_tokens::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Token.def()
     }
 }
 

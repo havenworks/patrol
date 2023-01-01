@@ -1,9 +1,11 @@
+use std::time::Duration;
+
 use crate::models::{user_tokens, users_roles};
-use crate::Db;
 use crate::{models::users, FirstAdminRegistered};
+use crate::{Db, MAX_AGE};
 
 use super::error::ApiError;
-use super::Resources;
+use super::{AuthUser, Resources};
 
 use anyhow::anyhow;
 use argon2::password_hash::SaltString;
@@ -152,18 +154,14 @@ impl UserApi {
         Ok(CreateUserResponse::Created(Json(user)))
     }
 
-    #[oai(path = "/:id/change-password", method = "post")]
+    #[oai(path = "/change-password", method = "post")]
     async fn change_password(
         &self,
-        user_id: Path<Uuid>,
+        user: AuthUser,
         change_password: Json<ChangePassword>,
         db: Data<&Db>,
     ) -> Result<ChangePasswordResponse> {
-        let user: users::Model = users::find_by_id(*user_id)
-            .one(&db.conn)
-            .await
-            .map_err(InternalServerError)?
-            .ok_or(ChangePasswordResponse::NotFound)?;
+        let user = user.0;
 
         // TODO: Michal, finish implementing this, or the   c r a b   will haunt you!
         match verify_password(&user, change_password.old_password.as_bytes())? {
@@ -220,7 +218,10 @@ impl UserApi {
         .await
         .map_err(InternalServerError)?;
 
-        cookies.add(Cookie::new_with_str("_patrol_key", token));
+        let mut cookie = Cookie::new_with_str("_patrol_key", token);
+        cookie.set_max_age(Duration::from_secs(MAX_AGE));
+
+        cookies.add(cookie);
 
         Ok(LoginResponse::LoggedIn(Json(user)))
     }
