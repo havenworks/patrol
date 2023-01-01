@@ -78,9 +78,7 @@ enum ChangePasswordResponse {
     #[oai(status = 200)]
     Changed,
     #[oai(status = 401)]
-    WrongPassword(Json<ApiError<WrongPasswordData>>),
-    #[oai(status = 404)]
-    NotFound,
+    WrongPassword(Json<WrongPasswordData>),
 }
 
 #[derive(Object, Deserialize)]
@@ -163,9 +161,10 @@ impl UserApi {
     ) -> Result<ChangePasswordResponse> {
         let user = user.0;
 
-        // TODO: Michal, finish implementing this, or the   c r a b   will haunt you!
-        match verify_password(&user, change_password.old_password.as_bytes())? {
-            _ => {}
+        if let Err(wrong_password) =
+            verify_password(&user, change_password.old_password.as_bytes())?
+        {
+            return Ok(ChangePasswordResponse::WrongPassword(Json(wrong_password)));
         }
 
         let old_password_hash = user.password_hash.clone();
@@ -182,7 +181,7 @@ impl UserApi {
             .await
             .map_err(InternalServerError)?;
 
-        Ok(ChangePasswordResponse::NotFound)
+        Ok(ChangePasswordResponse::Changed)
     }
 
     #[oai(path = "/login", method = "post")]
