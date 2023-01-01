@@ -1,12 +1,13 @@
 use crate::models;
-use sea_orm::entity::prelude::*;
+use sea_orm::{entity::prelude::*, Set};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
-#[sea_orm(table_name = "deactivated_user_tokens")]
+#[sea_orm(table_name = "user_tokens")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false, unique)]
-    pub id: Uuid,
+    pub value: String,
+    pub valid: bool,
 
     pub user_id: Uuid,
 }
@@ -14,11 +15,19 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "models::user::Entity",
+        belongs_to = "models::users::Entity",
         from = "Column::UserId",
-        to = "models::user::Column::Id"
+        to = "models::users::Column::Id"
     )]
     User,
 }
 
-impl ActiveModelBehavior for ActiveModel {}
+impl ActiveModelBehavior for ActiveModel {
+    fn new() -> Self {
+        Self {
+            valid: Set(true),
+
+            ..ActiveModelTrait::default()
+        }
+    }
+}

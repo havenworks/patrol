@@ -1,6 +1,4 @@
-use std::ops::Deref;
-
-use crate::models::users_roles;
+use crate::models::{user_tokens, users_roles};
 use crate::Db;
 use crate::{models::users, FirstAdminRegistered};
 
@@ -16,10 +14,12 @@ use argon2::{
 };
 use chrono::Utc;
 use poem::error::InternalServerError;
+use poem::web::cookie::{Cookie, CookieJar};
 use poem::web::Data;
 use poem::Result;
 use poem_openapi::param::Path;
 use poem_openapi::{payload::Json, ApiResponse, Enum, Object, OpenApi};
+use rand::RngCore;
 use sea_orm::prelude::DateTimeUtc;
 use sea_orm::{ActiveModelBehavior, ActiveModelTrait, Set, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -58,7 +58,7 @@ struct UserLogin {
 #[derive(ApiResponse)]
 enum LoginResponse {
     #[oai(status = 200)]
-    LoggedIn,
+    LoggedIn(Json<users::Model>),
     #[oai(status = 404)]
     NotFound,
     #[oai(status = 401)]
@@ -167,7 +167,7 @@ impl UserApi {
             .ok_or(ChangePasswordResponse::NotFound)?;
 
         // TODO: Michal, finish implementing this, or the   c r a b   will haunt you!
-        match verify_password(user.clone(), change_password.old_password.as_bytes())? {
+        match verify_password(&user, change_password.old_password.as_bytes())? {
             _ => {}
         }
 
@@ -189,19 +189,41 @@ impl UserApi {
     }
 
     #[oai(path = "/login", method = "post")]
-    async fn login(&self, user_login: Json<UserLogin>, db: Data<&Db>) -> Result<LoginResponse> {
+    async fn login(
+        &self,
+        user_login: Json<UserLogin>,
+        cookies: &CookieJar,
+        db: Data<&Db>,
+    ) -> Result<LoginResponse> {
         let user = users::find_by_username(user_login.username.clone())
             .one(&db.conn)
             .await
             .map_err(InternalServerError)?
             .ok_or(LoginResponse::NotFound)?;
 
-        Ok(
-            match verify_password(user, user_login.password.as_bytes())? {
-                Ok(()) => LoginResponse::LoggedIn,
-                Err(error) => LoginResponse::Unauthorized(Json(error)),
-            },
-        )
+        verify_password(&user, user_login.password.as_bytes())?
+            .map_err(|error| LoginResponse::Unauthorized(Json(error)))?;
+
+        let mut token_bytes = [0u8; 32];
+        rand::thread_rng()
+            .try_fill_bytes(&mut token_bytes)
+            .map_err(InternalServerError)?;
+
+        let token = hex::encode(token_bytes);
+
+        user_tokens::ActiveModel {
+            value: Set(token.clone()),
+            user_id: Set(user.id),
+
+            ..user_tokens::ActiveModel::new()
+        }
+        .insert(&db.conn)
+        .await
+        .map_err(InternalServerError)?;
+
+        cookies.add(Cookie::new_with_str("_patrol_key", token));
+
+        Ok(LoginResponse::LoggedIn(Json(user)))
     }
 }
 
@@ -216,22 +238,25 @@ async fn hash_password(password: &[u8]) -> anyhow::Result<String> {
 }
 
 fn verify_password(
-    user: users::Model,
+    user: &users::Model,
     password: &[u8],
 ) -> Result<std::result::Result<(), WrongPasswordData>> {
     let hash =
         PasswordHash::new(&user.password_hash).map_err(|_| anyhow!("Failed to parse hash"))?;
 
-    if let Ok(_) = Argon2::default().verify_password(password, &hash) {
+    if Argon2::default().verify_password(password, &hash).is_ok() {
         return Ok(Ok(()));
     }
 
     // If password has been changed
-    if let Some(password_hash_previous) = user.password_hash_previous {
-        let hash_previous = PasswordHash::new(&password_hash_previous)
+    if let Some(password_hash_previous) = &user.password_hash_previous {
+        let hash_previous = PasswordHash::new(password_hash_previous)
             .map_err(|_| anyhow!("Failed to parse hash"))?;
 
-        if let Ok(_) = Argon2::default().verify_password(password, &hash_previous) {
+        if Argon2::default()
+            .verify_password(password, &hash_previous)
+            .is_ok()
+        {
             return Ok(Err(WrongPasswordData {
                 reason: WrongPasswordError::ChangedAt,
                 changed_at: Some(user.password_changed_at),

@@ -3,8 +3,8 @@ use console::{style, Emoji};
 use dotenv::dotenv;
 use log::info;
 use poem::{
-    endpoint::EmbeddedFilesEndpoint, error::NotFoundError, listener::TcpListener, EndpointExt,
-    Response, Route,
+    endpoint::EmbeddedFilesEndpoint, error::NotFoundError, listener::TcpListener,
+    middleware::CookieJarManager, web::cookie::CookieKey, EndpointExt, Response, Route,
 };
 use poem_openapi::OpenApiService;
 use reqwest::StatusCode;
@@ -31,6 +31,9 @@ pub struct Db {
 pub struct FirstAdminRegistered {
     lock: Arc<RwLock<bool>>,
 }
+
+// 180 days
+const MAX_AGE: u64 = 60 * 60 * 24 * 180;
 
 #[derive(RustEmbed)]
 #[folder = "static"]
@@ -64,6 +67,7 @@ async fn main() -> anyhow::Result<()> {
         .data
         .to_vec();
 
+    // Database
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL is not set in the `.env` file");
     let conn = sea_orm::Database::connect(db_url)
         .await
@@ -72,6 +76,13 @@ async fn main() -> anyhow::Result<()> {
     info!("{} Running database migrations", Emoji("🗃 ", ""));
     db::run_migrations().await?;
 
+    // Cookies
+    let cookie_secret =
+        env::var("COOKIE_SECRET").expect("COOKIE_SECRET is not set in the `.env` file");
+    let cookie_key =
+        CookieKey::from(&hex::decode(cookie_secret).expect("Could not decode cookie key"));
+
+    // API
     let service = OpenApiService::new(api::SERVICES, "Patrol", env!("CARGO_PKG_VERSION"))
         .server("https://patrol");
 
@@ -84,7 +95,8 @@ async fn main() -> anyhow::Result<()> {
             "/",
             service
                 .data(Db { conn: conn.clone() })
-                .data(db::is_first_admin_registered(&Db { conn }).await?),
+                .data(db::is_first_admin_registered(&Db { conn }).await?)
+                .with(CookieJarManager::with_key(cookie_key)),
         )
         // Static assets
         .nest("/static", EmbeddedFilesEndpoint::<Static>::new())

@@ -15,7 +15,12 @@ jsonwebtoken = "8.2.0"
 log = "0.4.17"
 once_cell = "1.15.0"
 phf = "0.11.1"
-poem = { version = "1.3.0", features = ["embed", "anyhow", "static-files"] }
+poem = { version = "1.3.0", features = [
+  "embed",
+  "anyhow",
+  "static-files",
+  "cookie",
+] }
 pretty_env_logger = "0.4.0"
 rand = "0.8.5"
 reqwest = { version = "0.11.12", features = ["json"] }
@@ -30,18 +35,20 @@ console = "0.15.2"
 better-panic = "0.3.0"
 sha2 = "0.10.6"
 base64-url = "1.4.13"
+hex = "0.4.3"
 
 [dependencies.poem-openapi]
 version = "2.0.18"
 features = ["chrono", "uuid", "swagger-ui"]
 
 [dependencies.sea-orm]
-version = "0.10.0"
+version = "0.10.6"
 features = [
   "macros",
+  "postgres-array",
+  "runtime-tokio-rustls",
+  "sqlx-postgres",
   "with-chrono",
   "with-rust_decimal",
   "with-uuid",
-  "sqlx-postgres",
-  "runtime-tokio-rustls",
 ]

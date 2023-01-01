@@ -1,5 +1,5 @@
-mod client;
+pub mod clients;
 pub mod roles;
+pub mod user_tokens;
 pub mod users;
-// pub mod user_tokens;
 pub mod users_roles;
