@@ -4,8 +4,9 @@ use crate::models::{user_tokens, users_roles};
 use crate::{models::users, FirstAdminRegistered};
 use crate::{Db, MAX_AGE};
 
+use super::crypto;
 use super::error::ApiError;
-use super::{AuthUser, Resources};
+use super::{AuthAdmin, AuthUser, Resources};
 
 use anyhow::anyhow;
 use argon2::password_hash::SaltString;
@@ -108,13 +109,14 @@ impl UserApi {
     #[oai(path = "/", method = "post")]
     async fn create(
         &self,
+        _admin: AuthAdmin,
         new_user: Json<NewUser>,
-        db: Data<&Db>,
         is_first_admin_registered: Data<&FirstAdminRegistered>,
+        db: Data<&Db>,
     ) -> Result<CreateUserResponse> {
-        let password_hash = hash_password(new_user.password.as_bytes()).await?;
+        let password_hash = crypto::hashing::hash(new_user.password.as_bytes())?.0;
 
-        // WARN: Not ready for more than a single-instance deployment
+        // ! Not ready for more than a single-instance deployment
         let is_first_admin_registered = &is_first_admin_registered.0.lock;
 
         // The new user is an admin only if no admin has been registered before
@@ -126,7 +128,7 @@ impl UserApi {
             username: Set(new_user.username.clone()),
             first_name: Set(new_user.first_name.clone()),
             last_name: Set(new_user.last_name.clone()),
-            password_hash: Set(password_hash),
+            password_hash: Set(password_hash.to_string()),
 
             ..users::ActiveModel::new()
         }
@@ -169,11 +171,11 @@ impl UserApi {
 
         let old_password_hash = user.password_hash.clone();
 
-        let new_hash = hash_password(change_password.new_password.as_bytes()).await?;
+        let new_hash = crypto::hashing::hash(change_password.new_password.as_bytes())?.0;
         let mut active_user: users::ActiveModel = user.into();
 
         active_user.password_hash_previous = Set(Some(old_password_hash));
-        active_user.password_hash = Set(new_hash);
+        active_user.password_hash = Set(new_hash.to_string());
         active_user.password_changed_at = Set(Utc::now());
 
         active_user
@@ -226,31 +228,19 @@ impl UserApi {
     }
 }
 
-async fn hash_password(password: &[u8]) -> anyhow::Result<String> {
-    let salt = SaltString::generate(OsRng);
-    let password_hash = Argon2::default()
-        .hash_password(password, &salt)
-        .map_err(|_| anyhow!("Failed to hash password"))?
-        .to_string();
-
-    Ok(password_hash)
-}
-
-fn verify_password(
+pub fn verify_password(
     user: &users::Model,
     password: &[u8],
 ) -> Result<std::result::Result<(), WrongPasswordData>> {
-    let hash =
-        PasswordHash::new(&user.password_hash).map_err(|_| anyhow!("Failed to parse hash"))?;
+    let hash = crypto::hashing::parse_hash(&user.password_hash)?;
 
-    if Argon2::default().verify_password(password, &hash).is_ok() {
+    if crypto::hashing::verify(password, &hash) {
         return Ok(Ok(()));
     }
 
     // If password has been changed
     if let Some(password_hash_previous) = &user.password_hash_previous {
-        let hash_previous = PasswordHash::new(password_hash_previous)
-            .map_err(|_| anyhow!("Failed to parse hash"))?;
+        let hash_previous = crypto::hashing::hash(password_hash_previous.as_bytes())?.0;
 
         if Argon2::default()
             .verify_password(password, &hash_previous)

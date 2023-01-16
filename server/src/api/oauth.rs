@@ -10,10 +10,10 @@ use poem::{
     error::{InternalServerError, Result},
     http::header,
     web::{Data, Path},
-    IntoResponse,
 };
 use poem_openapi::{payload::Response, ApiResponse, Enum, OpenApi};
 use serde::Deserialize;
+use url::Url;
 use uuid::Uuid;
 
 pub struct OauthApi;
@@ -41,6 +41,8 @@ enum AuthorizeResponse {
     NotFound,
     #[oai(status = 428)]
     GrantTypeNotAllowed,
+    #[oai(status = 400)]
+    InvalidRedirectUri,
     #[oai(status = 303)]
     Redirect,
 }
@@ -51,16 +53,18 @@ impl OauthApi {
     async fn authorize(
         &self,
         client_id: Path<Uuid>,
-        _redirect_uri: Path<String>,
+        redirect_uri: Path<String>,
         response_type: Path<ResponseType>,
         db: Data<&Db>,
     ) -> Result<Response<AuthorizeResponse>> {
+        // Check if the client exists
         let client = clients::find_by_id(*client_id)
             .one(&db.conn)
             .await
             .map_err(InternalServerError)?
             .ok_or(AuthorizeResponse::NotFound)?;
 
+        // Check if the client is allowed to use the grant type
         if !client
             .grant_types
             .contains(&response_type.deref().to_grant_type().to_string())
@@ -68,8 +72,14 @@ impl OauthApi {
             return Ok(Response::new(AuthorizeResponse::GrantTypeNotAllowed));
         }
 
-        Ok(Response::new(AuthorizeResponse::Redirect).header(header::LOCATION, "/"))
+        // Parse the redirect URI and check if it matches any of the URIs
+        // registered for the client
+        let redirect_uri =
+            Url::parse(&redirect_uri).map_err(|_| AuthorizeResponse::InvalidRedirectUri)?;
+        
 
-        // Response::new(Ok(AuthorizeResponse::NotFound))
+        client.redirect_uris.iter()
+
+        Ok(Response::new(AuthorizeResponse::Redirect).header(header::LOCATION, "/"))
     }
 }

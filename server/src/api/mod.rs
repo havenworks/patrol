@@ -6,6 +6,8 @@ use crate::{models::user_tokens, Db};
 
 use super::models::{self, users::Model as User};
 
+mod clients;
+pub mod crypto;
 mod error;
 mod jwt;
 mod oauth;
@@ -14,6 +16,7 @@ pub mod well_known;
 
 #[derive(Tags)]
 pub enum Resources {
+    Clients,
     Oauth,
     Users,
     WellKnown,
