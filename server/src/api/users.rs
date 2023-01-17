@@ -83,7 +83,7 @@ enum ChangePasswordResponse {
 }
 
 #[derive(Object, Deserialize)]
-struct WrongPasswordData {
+pub struct WrongPasswordData {
     reason: WrongPasswordError,
     #[oai(skip_serializing_if_is_none = true)]
     changed_at: Option<DateTimeUtc>,
@@ -114,7 +114,9 @@ impl UserApi {
         is_first_admin_registered: Data<&FirstAdminRegistered>,
         db: Data<&Db>,
     ) -> Result<CreateUserResponse> {
-        let password_hash = crypto::hashing::hash(new_user.password.as_bytes())?.0;
+        let salt_string = SaltString::generate(&mut OsRng);
+        let salt = salt_string.as_salt();
+        let password_hash = crypto::hashing::hash(&salt, new_user.password.as_bytes())?;
 
         // ! Not ready for more than a single-instance deployment
         let is_first_admin_registered = &is_first_admin_registered.0.lock;
@@ -171,7 +173,9 @@ impl UserApi {
 
         let old_password_hash = user.password_hash.clone();
 
-        let new_hash = crypto::hashing::hash(change_password.new_password.as_bytes())?.0;
+        let salt_string = SaltString::generate(&mut OsRng);
+        let salt = salt_string.as_salt();
+        let new_hash = crypto::hashing::hash(&salt, change_password.new_password.as_bytes())?;
         let mut active_user: users::ActiveModel = user.into();
 
         active_user.password_hash_previous = Set(Some(old_password_hash));
@@ -240,7 +244,9 @@ pub fn verify_password(
 
     // If password has been changed
     if let Some(password_hash_previous) = &user.password_hash_previous {
-        let hash_previous = crypto::hashing::hash(password_hash_previous.as_bytes())?.0;
+        let salt_string = SaltString::generate(&mut OsRng);
+        let salt = salt_string.as_salt();
+        let hash_previous = crypto::hashing::hash(&salt, password_hash_previous.as_bytes())?;
 
         if Argon2::default()
             .verify_password(password, &hash_previous)
