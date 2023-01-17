@@ -2,11 +2,15 @@ use std::ops::Deref;
 
 use crate::{
     api::Resources,
-    models::clients::{self, GrantType},
-    models::oauth::tokens,
+    models::oauth::tokens::{self, ACCESS_KEY_EXPIRY, REFRESH_KEY_EXPIRY},
+    models::{
+        clients::{self, GrantType},
+        oauth::tokens::ACCESS_KEY_TYPE,
+    },
     Db,
 };
 
+use chrono::{Duration, Utc};
 use poem::{
     error::{InternalServerError, Result},
     http::header,
@@ -16,7 +20,8 @@ use poem_openapi::{
     payload::{Json, Response},
     ApiResponse, Enum, Object, OpenApi,
 };
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use rand::distributions::{Alphanumeric, DistString};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
 use url::Url;
 use uuid::Uuid;
@@ -156,12 +161,32 @@ impl OauthApi {
             return Ok(Response::new(TokenResponse::InvalidGrant));
         }
 
+        let access_token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
+        let refresh_token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
+
         let token_response = TokenResponseType {
-            access_token: "ACC_TOKEN".to_string(),
-            refresh_token: "REFRESH_TOKEN".to_string(),
-            expires_in: "3600".to_string(),
-            token_type: "bearer".to_string(),
+            access_token: access_token.clone(),
+            refresh_token: refresh_token.clone(),
+            expires_in: ACCESS_KEY_EXPIRY.to_string(),
+            token_type: ACCESS_KEY_TYPE.to_string(),
         };
+
+        let mut active_token: tokens::ActiveModel = token.into();
+
+        let now = Utc::now();
+
+        active_token.access_key = Set(access_token);
+        active_token.access_key_created_at = Set(now);
+        active_token.access_key_expires_at = Set(now + Duration::seconds(ACCESS_KEY_EXPIRY));
+
+        active_token.refresh_key = Set(refresh_token);
+        active_token.refresh_key_created_at = Set(now);
+        active_token.refresh_key_expires_at = Set(now + Duration::seconds(REFRESH_KEY_EXPIRY));
+
+        active_token
+            .update(&db.conn)
+            .await
+            .map_err(InternalServerError)?;
 
         return Ok(Response::new(TokenResponse::Success(Json(token_response)))
             .header("Cache-Control", "no-store"));
