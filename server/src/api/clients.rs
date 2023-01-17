@@ -1,8 +1,10 @@
 use crate::{models::clients, Db};
 
 use super::{crypto, AuthAdmin};
+use argon2::password_hash::SaltString;
 use poem::{error::InternalServerError, web::Data, Result};
 use poem_openapi::{payload::Json, ApiResponse, Object, OpenApi};
+use rsa::rand_core::OsRng;
 use sea_orm::{ActiveModelBehavior, ActiveModelTrait, Set};
 
 pub struct ClientApi;
@@ -33,9 +35,9 @@ impl ClientApi {
         new_client: Json<NewClient>,
         db: Data<&Db>,
     ) -> Result<CreateClientResponse> {
-        let secret_hash = crypto::hashing::hash(new_client.secret.as_bytes())?
-            .0
-            .to_string();
+        let salt = SaltString::generate(OsRng);
+
+        let secret_hash = crypto::hashing::hash(&salt, new_client.secret.as_bytes())?.to_string();
 
         // Create the client in the database
         let client = clients::ActiveModel {
