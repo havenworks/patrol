@@ -28,6 +28,8 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 use uuid::Uuid;
 
+use super::crypto::hashing;
+
 pub struct OauthApi;
 
 #[derive(Copy, Clone, Enum, Deserialize)]
@@ -159,14 +161,21 @@ async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<Token
 
     let redirect_uri = Url::parse(&path.redirect_uri).map_err(|_| TokenResponse::InvalidGrant)?;
 
-    let client = clients::Entity::find()
-        .filter(clients::Column::Id.eq(path.client_id.clone()))
-        .filter(clients::Column::Secret.eq(path.client_secret.clone()))
+    let client = clients::find_by_id(path.client_id)
         .one(&db.conn)
         .await
         .map_err(InternalServerError)?
         .ok_or(TokenResponse::InvalidClient)?;
 
+    // Check if the client secret matches
+    if !hashing::verify(
+        path.client_secret.as_bytes(),
+        &hashing::parse_hash(client.secret.as_str())?,
+    ) {
+        return Ok(TokenResponse::InvalidClient);
+    }
+
+    // Check if the client is allowed to use the grant type
     if !client
         .grant_types
         .contains(&"authorization_code".to_string())
