@@ -11,10 +11,12 @@ use crate::{
 };
 
 use chrono::{Duration, Utc};
+use log::debug;
 use poem::{
     error::{InternalServerError, Result},
     http::header,
     web::{Data, Path},
+    Body, FromRequest, Request,
 };
 use poem_openapi::{
     payload::{Json, Response},
@@ -119,76 +121,99 @@ impl OauthApi {
     }
 
     #[oai(path = "/token", method = "post")]
-    async fn token(
+    async fn token_password(
         &self,
         grant_type: Path<GrantType>,
-        code: Path<String>,
-        redirect_uri: Path<String>,
-        client_id: Path<Uuid>,
-        client_secret: Path<String>,
+        request: &Request,
         db: Data<&Db>,
     ) -> Result<Response<TokenResponse>> {
-        if *grant_type != GrantType::AuthCode {
-            return Ok(Response::new(TokenResponse::InvalidGrant));
-        }
+        // ! Check grant_type here and return appropriate error message (invalid_grant)
+        let token = match *grant_type {
+            GrantType::AuthCode => create_token_with_auth_code(&request, &db).await,
+            GrantType::ClientCreds => {
+                todo!()
+            }
+            GrantType::Implicit => {
+                todo!()
+            }
+            GrantType::Password => {
+                todo!()
+            }
+        }?;
 
-        let redirect_uri = Url::parse(&redirect_uri).map_err(|_| TokenResponse::InvalidGrant)?;
-
-        let client = clients::Entity::find()
-            .filter(clients::Column::Id.eq(client_id.deref().clone()))
-            .filter(clients::Column::Secret.eq(client_secret.deref().clone()))
-            .one(&db.conn)
-            .await
-            .map_err(InternalServerError)?
-            .ok_or(TokenResponse::InvalidClient)?;
-
-        if !client.grant_types.contains(&grant_type.deref().to_string()) {
-            return Ok(Response::new(TokenResponse::UnauthorizedClient));
-        }
-
-        let token = tokens::Entity::find()
-            .filter(tokens::Column::Code.eq(code.deref().clone()))
-            .filter(tokens::Column::ClientId.eq(client_id.deref().clone()))
-            .one(&db.conn)
-            .await
-            .map_err(InternalServerError)?
-            .ok_or(TokenResponse::InvalidGrant)?;
-
-        let authorize_redirect_uri =
-            Url::parse(&token.redirect_uri).map_err(InternalServerError)?;
-
-        if redirect_uri != authorize_redirect_uri {
-            return Ok(Response::new(TokenResponse::InvalidGrant));
-        }
-
-        let access_token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
-        let refresh_token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
-
-        let token_response = TokenResponseType {
-            access_token: access_token.clone(),
-            refresh_token: refresh_token.clone(),
-            expires_in: ACCESS_KEY_EXPIRY.to_string(),
-            token_type: ACCESS_KEY_TYPE.to_string(),
-        };
-
-        let mut active_token: tokens::ActiveModel = token.into();
-
-        let now = Utc::now();
-
-        active_token.access_key = Set(access_token);
-        active_token.access_key_created_at = Set(now);
-        active_token.access_key_expires_at = Set(now + Duration::seconds(ACCESS_KEY_EXPIRY));
-
-        active_token.refresh_key = Set(refresh_token);
-        active_token.refresh_key_created_at = Set(now);
-        active_token.refresh_key_expires_at = Set(now + Duration::seconds(REFRESH_KEY_EXPIRY));
-
-        active_token
-            .update(&db.conn)
-            .await
-            .map_err(InternalServerError)?;
-
-        return Ok(Response::new(TokenResponse::Success(Json(token_response)))
-            .header("Cache-Control", "no-store"));
+        Ok(Response::new(token).header("Cache-Control", "no-cache"))
     }
+}
+#[derive(Deserialize)]
+struct TokenAuthCodeParams {
+    code: String,
+    redirect_uri: String,
+    client_id: Uuid,
+    client_secret: String,
+}
+
+async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<TokenResponse> {
+    let Path(path): Path<TokenAuthCodeParams> = Path::from_request_without_body(request)
+        .await
+        .map_err(|_| TokenResponse::InvalidRequest)?;
+
+    let redirect_uri = Url::parse(&path.redirect_uri).map_err(|_| TokenResponse::InvalidGrant)?;
+
+    let client = clients::Entity::find()
+        .filter(clients::Column::Id.eq(path.client_id.clone()))
+        .filter(clients::Column::Secret.eq(path.client_secret.clone()))
+        .one(&db.conn)
+        .await
+        .map_err(InternalServerError)?
+        .ok_or(TokenResponse::InvalidClient)?;
+
+    if !client
+        .grant_types
+        .contains(&"authorization_code".to_string())
+    {
+        return Ok(TokenResponse::UnauthorizedClient);
+    }
+
+    let token = tokens::Entity::find()
+        .filter(tokens::Column::Code.eq(path.code.clone()))
+        .filter(tokens::Column::ClientId.eq(path.client_id.clone()))
+        .one(&db.conn)
+        .await
+        .map_err(InternalServerError)?
+        .ok_or(TokenResponse::InvalidGrant)?;
+
+    let authorize_redirect_uri = Url::parse(&token.redirect_uri).map_err(InternalServerError)?;
+
+    if redirect_uri != authorize_redirect_uri {
+        return Ok(TokenResponse::InvalidGrant);
+    }
+
+    let access_token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
+    let refresh_token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
+
+    let token_response = TokenResponseType {
+        access_token: access_token.clone(),
+        refresh_token: refresh_token.clone(),
+        expires_in: ACCESS_KEY_EXPIRY.to_string(),
+        token_type: ACCESS_KEY_TYPE.to_string(),
+    };
+
+    let mut active_token: tokens::ActiveModel = token.into();
+
+    let now = Utc::now();
+
+    active_token.access_key = Set(access_token);
+    active_token.access_key_created_at = Set(now);
+    active_token.access_key_expires_at = Set(now + Duration::seconds(ACCESS_KEY_EXPIRY));
+
+    active_token.refresh_key = Set(refresh_token);
+    active_token.refresh_key_created_at = Set(now);
+    active_token.refresh_key_expires_at = Set(now + Duration::seconds(REFRESH_KEY_EXPIRY));
+
+    active_token
+        .update(&db.conn)
+        .await
+        .map_err(InternalServerError)?;
+
+    return Ok(TokenResponse::Success(Json(token_response)));
 }
