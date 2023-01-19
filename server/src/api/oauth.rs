@@ -2,10 +2,14 @@ use std::ops::Deref;
 
 use crate::{
     api::Resources,
-    models::oauth::tokens::{self, ACCESS_KEY_EXPIRY, REFRESH_KEY_EXPIRY},
     models::{
         clients::{self, GrantType},
         oauth::tokens::ACCESS_KEY_TYPE,
+    },
+    models::{
+        oauth::token_requests,
+        oauth::tokens::{self, ACCESS_KEY_EXPIRY, REFRESH_KEY_EXPIRY},
+        users,
     },
     Db,
 };
@@ -23,12 +27,12 @@ use poem_openapi::{
     ApiResponse, Enum, Object, OpenApi,
 };
 use rand::distributions::{Alphanumeric, DistString};
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelBehavior, ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
 use url::Url;
 use uuid::Uuid;
 
-use super::crypto::hashing;
+use super::{crypto::hashing, users::verify_password};
 
 pub struct OauthApi;
 
@@ -138,9 +142,7 @@ impl OauthApi {
             GrantType::Implicit => {
                 todo!()
             }
-            GrantType::Password => {
-                todo!()
-            }
+            GrantType::Password => create_token_with_password(&request, &db).await,
         }?;
 
         Ok(Response::new(token).header("Cache-Control", "no-cache"))
@@ -183,15 +185,16 @@ async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<Token
         return Ok(TokenResponse::UnauthorizedClient);
     }
 
-    let token = tokens::Entity::find()
-        .filter(tokens::Column::Code.eq(path.code.clone()))
+    let token_request = token_requests::Entity::find()
+        .filter(token_requests::Column::Code.eq(path.code.clone()))
         .filter(tokens::Column::ClientId.eq(path.client_id.clone()))
         .one(&db.conn)
         .await
         .map_err(InternalServerError)?
         .ok_or(TokenResponse::InvalidGrant)?;
 
-    let authorize_redirect_uri = Url::parse(&token.redirect_uri).map_err(InternalServerError)?;
+    let authorize_redirect_uri =
+        Url::parse(&token_request.redirect_uri).map_err(InternalServerError)?;
 
     if redirect_uri != authorize_redirect_uri {
         return Ok(TokenResponse::InvalidGrant);
@@ -200,29 +203,108 @@ async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<Token
     let access_token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
     let refresh_token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
 
+    let now = Utc::now();
+
+    tokens::ActiveModel {
+        access_key: Set(access_token.clone()),
+        access_key_expires_at: Set(now),
+
+        refresh_key: Set(refresh_token.clone()),
+        refresh_key_expires_at: Set(now),
+
+        ..tokens::ActiveModel::new()
+    }
+    .insert(&db.conn)
+    .await
+    .map_err(InternalServerError)?;
+
     let token_response = TokenResponseType {
-        access_token: access_token.clone(),
-        refresh_token: refresh_token.clone(),
+        access_token,
+        refresh_token,
         expires_in: ACCESS_KEY_EXPIRY.to_string(),
         token_type: ACCESS_KEY_TYPE.to_string(),
     };
 
-    let mut active_token: tokens::ActiveModel = token.into();
+    return Ok(TokenResponse::Success(Json(token_response)));
+}
+
+#[derive(Deserialize)]
+struct TokenPasswordParams {
+    username: String,
+    password: String,
+    scope: Option<String>,
+    client_id: Uuid,
+    client_secret: String,
+}
+
+async fn create_token_with_password(request: &Request, db: &Db) -> Result<TokenResponse> {
+    let Path(path): Path<TokenPasswordParams> = Path::from_request_without_body(request)
+        .await
+        .map_err(|_| TokenResponse::InvalidRequest)?;
+
+    let client = clients::find_by_id(path.client_id)
+        .one(&db.conn)
+        .await
+        .map_err(InternalServerError)?
+        .ok_or(TokenResponse::InvalidClient)?;
+
+    // Check if the client secret matches
+    if !hashing::verify(
+        path.client_secret.as_bytes(),
+        &hashing::parse_hash(client.secret.as_str())?,
+    ) {
+        return Ok(TokenResponse::InvalidClient);
+    }
+
+    // Check if the client is allowed to use the grant type
+    if !client.grant_types.contains(&"password".to_string()) {
+        return Ok(TokenResponse::UnauthorizedClient);
+    }
+
+    let user = users::find_by_username(path.username)
+        .one(&db.conn)
+        .await
+        .map_err(InternalServerError)?
+        .ok_or(TokenResponse::InvalidGrant)?;
+
+    // Check if the client secret matches
+    if !hashing::verify(
+        path.password.as_bytes(),
+        &hashing::parse_hash(&user.password_hash)?,
+    ) {
+        return Ok(TokenResponse::InvalidClient);
+    }
+
+    verify_password(&user, path.password.as_bytes())?.map_err(|_| TokenResponse::InvalidGrant)?;
+
+    // ! Add scopes to Access Token JWT
+    // if let Some(scope) = path.scope {
+    // }
+
+    let access_token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
+    let refresh_token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
 
     let now = Utc::now();
 
-    active_token.access_key = Set(access_token);
-    active_token.access_key_created_at = Set(now);
-    active_token.access_key_expires_at = Set(now + Duration::seconds(ACCESS_KEY_EXPIRY));
+    tokens::ActiveModel {
+        access_key: Set(access_token.clone()),
+        access_key_expires_at: Set(now),
 
-    active_token.refresh_key = Set(refresh_token);
-    active_token.refresh_key_created_at = Set(now);
-    active_token.refresh_key_expires_at = Set(now + Duration::seconds(REFRESH_KEY_EXPIRY));
+        refresh_key: Set(refresh_token.clone()),
+        refresh_key_expires_at: Set(now),
 
-    active_token
-        .update(&db.conn)
-        .await
-        .map_err(InternalServerError)?;
+        ..tokens::ActiveModel::new()
+    }
+    .insert(&db.conn)
+    .await
+    .map_err(InternalServerError)?;
+
+    let token_response = TokenResponseType {
+        access_token,
+        refresh_token,
+        expires_in: ACCESS_KEY_EXPIRY.to_string(),
+        token_type: ACCESS_KEY_TYPE.to_string(),
+    };
 
     return Ok(TokenResponse::Success(Json(token_response)));
 }
