@@ -13,6 +13,7 @@ pub struct Model {
     pub created_at: DateTimeUtc,
 
     pub client_id: Uuid,
+    pub user_id: Uuid,
 }
 
 #[derive(Debug, Copy, Clone, EnumIter, DeriveRelation)]
@@ -23,6 +24,12 @@ pub enum Relation {
         to = "models::clients::Column::Id"
     )]
     Client,
+    #[sea_orm(
+        belongs_to = "models::users::Entity",
+        from = "Column::UserId",
+        to = "models::users::Column::Id"
+    )]
+    User,
 }
 
 impl ActiveModelBehavior for ActiveModel {

@@ -14,7 +14,7 @@ use crate::{
     Db,
 };
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use log::debug;
 use poem::{
@@ -201,17 +201,19 @@ async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<Token
         return Ok(TokenResponse::InvalidGrant);
     }
 
-    let access_token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
-    let refresh_token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
-
-    let now = Utc::now();
+    let (access_token, access_token_expires_at) = generate_access_token_jwt(
+        &client.id,
+        &token_request.user_id.to_string(),
+        "scope".to_string(),
+    )?;
+    let (refresh_token, refresh_token_expires_at) = generate_refresh_token();
 
     tokens::ActiveModel {
         access_key: Set(access_token.clone()),
-        access_key_expires_at: Set(now),
+        access_key_expires_at: Set(access_token_expires_at),
 
         refresh_key: Set(refresh_token.clone()),
-        refresh_key_expires_at: Set(now),
+        refresh_key_expires_at: Set(refresh_token_expires_at),
 
         ..tokens::ActiveModel::new()
     }
@@ -282,17 +284,19 @@ async fn create_token_with_password(request: &Request, db: &Db) -> Result<TokenR
     // if let Some(scope) = path.scope {
     // }
 
-    let access_token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
-    let refresh_token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
-
-    let now = Utc::now();
+    let (access_token, access_token_expires_at) =
+        generate_access_token_jwt(&client.id, &user.id.to_string(), "scope".to_string())?;
+    let (refresh_token, refresh_token_expires_at) = generate_refresh_token();
 
     tokens::ActiveModel {
         access_key: Set(access_token.clone()),
-        access_key_expires_at: Set(now),
+        access_key_expires_at: Set(access_token_expires_at),
 
         refresh_key: Set(refresh_token.clone()),
-        refresh_key_expires_at: Set(now),
+        refresh_key_expires_at: Set(refresh_token_expires_at),
+
+        client_id: Set(client.id),
+        user_id: Set(user.id),
 
         ..tokens::ActiveModel::new()
     }
@@ -318,31 +322,49 @@ struct AccessTokenClaims {
     client_id: String,
     scope: String,
     jti: String,
-    exp: usize,
-    iat: usize,
+    exp: i64,
+    iat: i64,
 }
 
-fn generate_access_token_jwt(client_id: Uuid) -> Result<String> {
+fn generate_access_token_jwt(
+    client_id: &Uuid,
+    sub: &String,
+    scope: String,
+) -> Result<(String, DateTime<Utc>)> {
     let mut header = Header::new(Algorithm::RS256);
 
     header.typ = Some("at+JWT".to_string());
+
+    let now = Utc::now();
+    let expires_at = now + Duration::seconds(ACCESS_KEY_EXPIRY);
 
     let claims = AccessTokenClaims {
         // ! Figure out how to differentiate between instances.
         iss: "patrol".to_string(),
         aud: client_id.to_string(),
-        sub: "user_id-or-server_identificator".to_string(),
+        sub: sub.clone(),
         client_id: client_id.to_string(),
-        scope: "hello world".to_string(),
+        scope,
         jti: Alphanumeric.sample_string(&mut rand::thread_rng(), 32),
-        exp: 69,
-        iat: 1,
+        exp: expires_at.timestamp(),
+        iat: now.timestamp(),
     };
 
-    encode(
+    let token = encode(
         &header,
         &claims,
-        &EncodingKey::from_secret("ahoj".as_bytes()),
+        // ! Add the secret
+        &EncodingKey::from_secret("very_secret_secret".as_bytes()),
     )
-    .map_err(InternalServerError)
+    .map_err(InternalServerError)?;
+
+    Ok((token, expires_at))
+}
+
+fn generate_refresh_token() -> (String, DateTime<Utc>) {
+    let token = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
+
+    let expires_at = Utc::now() + Duration::seconds(REFRESH_KEY_EXPIRY);
+
+    (token, expires_at)
 }
