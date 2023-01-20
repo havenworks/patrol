@@ -15,6 +15,7 @@ use crate::{
 };
 
 use chrono::{Duration, Utc};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use log::debug;
 use poem::{
     error::{InternalServerError, Result},
@@ -127,7 +128,7 @@ impl OauthApi {
     }
 
     #[oai(path = "/token", method = "post")]
-    async fn token_password(
+    async fn token(
         &self,
         grant_type: Path<GrantType>,
         request: &Request,
@@ -145,7 +146,7 @@ impl OauthApi {
             GrantType::Password => create_token_with_password(&request, &db).await,
         }?;
 
-        Ok(Response::new(token).header("Cache-Control", "no-cache"))
+        Ok(Response::new(token).header("Cache-Control", "no-cache, no-store"))
     }
 }
 #[derive(Deserialize)]
@@ -307,4 +308,41 @@ async fn create_token_with_password(request: &Request, db: &Db) -> Result<TokenR
     };
 
     return Ok(TokenResponse::Success(Json(token_response)));
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AccessTokenClaims {
+    iss: String,
+    aud: String,
+    sub: String,
+    client_id: String,
+    scope: String,
+    jti: String,
+    exp: usize,
+    iat: usize,
+}
+
+fn generate_access_token_jwt(client_id: Uuid) -> Result<String> {
+    let mut header = Header::new(Algorithm::RS256);
+
+    header.typ = Some("at+JWT".to_string());
+
+    let claims = AccessTokenClaims {
+        // ! Figure out how to differentiate between instances.
+        iss: "patrol".to_string(),
+        aud: client_id.to_string(),
+        sub: "user_id-or-server_identificator".to_string(),
+        client_id: client_id.to_string(),
+        scope: "hello world".to_string(),
+        jti: Alphanumeric.sample_string(&mut rand::thread_rng(), 32),
+        exp: 69,
+        iat: 1,
+    };
+
+    encode(
+        &header,
+        &claims,
+        &EncodingKey::from_secret("ahoj".as_bytes()),
+    )
+    .map_err(InternalServerError)
 }
