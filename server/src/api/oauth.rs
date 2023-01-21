@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{ops::Deref, str::FromStr};
 
 use crate::{
     api::Resources,
@@ -24,6 +24,7 @@ use poem::{
     Body, FromRequest, Request,
 };
 use poem_openapi::{
+    param,
     payload::{Json, PlainText, Response},
     ApiExtractor, ApiResponse, Enum, ExtractParamOptions, Object, OpenApi,
 };
@@ -49,7 +50,7 @@ impl ResponseType {
         if let Self::Token = self {
             GrantType::Implicit
         } else {
-            GrantType::AuthCode
+            GrantType::AuthorizationCode
         }
     }
 }
@@ -130,21 +131,20 @@ impl OauthApi {
     #[oai(path = "/token", method = "post")]
     async fn token(
         &self,
-        grant_type: poem_openapi::param::Query<GrantType>,
+        grant_type: param::Query<String>,
         request: &Request,
         db: Data<&Db>,
     ) -> Result<Response<TokenResponse>> {
         // ! Check grant_type here and return appropriate error message (invalid_grant)
-        let token = match *grant_type {
-            GrantType::AuthCode => create_token_with_auth_code(&request, &db).await,
-            GrantType::ClientCreds => create_token_with_client_creds(&request, &db).await,
-            GrantType::Implicit => {
-                todo!()
-            }
-            GrantType::Password => create_token_with_password(&request, &db).await,
-        }?;
 
-        // let token = TokenResponse::InvalidRequest;
+        let token = match GrantType::from_str(&grant_type.to_owned()) {
+            Ok(GrantType::AuthorizationCode) => create_token_with_auth_code(&request, &db).await,
+            Ok(GrantType::ClientCredentials) => create_token_with_client_creds(&request, &db).await,
+            Ok(GrantType::Password) => create_token_with_password(&request, &db).await,
+            _ => {
+                return Ok(Response::new(TokenResponse::UnsupportedGrantType));
+            }
+        }?;
 
         Ok(Response::new(token).header("Cache-Control", "no-cache, no-store"))
     }

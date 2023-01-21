@@ -32,6 +32,17 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: user_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_tokens (
+    value text NOT NULL,
+    valid boolean DEFAULT true NOT NULL,
+    user_id uuid NOT NULL
+);
+
+
+--
 -- Name: users; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -76,6 +87,14 @@ ALTER TABLE ONLY public.schema_migrations
 
 
 --
+-- Name: user_tokens user_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_tokens
+    ADD CONSTRAINT user_tokens_pkey PRIMARY KEY (value);
+
+
+--
 -- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -100,10 +119,25 @@ ALTER TABLE ONLY public.users
 
 
 --
+-- Name: user_tokens_user_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX user_tokens_user_id ON public.user_tokens USING btree (user_id);
+
+
+--
 -- Name: users_username; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE UNIQUE INDEX users_username ON public.users USING btree (username);
+
+
+--
+-- Name: user_tokens user_tokens_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_tokens
+    ADD CONSTRAINT user_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -132,4 +166,5 @@ ALTER TABLE ONLY public.users_roles
 --
 
 INSERT INTO public.schema_migrations (version) VALUES
-    ('20220819182426');
+    ('20220819182426'),
+    ('20230121160610');
