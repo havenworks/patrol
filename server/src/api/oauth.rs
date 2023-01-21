@@ -20,12 +20,12 @@ use log::debug;
 use poem::{
     error::{InternalServerError, Result},
     http::header,
-    web::{Data, Path},
+    web::{Data, Path, Query},
     Body, FromRequest, Request,
 };
 use poem_openapi::{
-    payload::{Json, Response},
-    ApiResponse, Enum, Object, OpenApi,
+    payload::{Json, PlainText, Response},
+    ApiExtractor, ApiResponse, Enum, ExtractParamOptions, Object, OpenApi,
 };
 use rand::distributions::{Alphanumeric, DistString};
 use sea_orm::{ActiveModelBehavior, ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
@@ -130,7 +130,7 @@ impl OauthApi {
     #[oai(path = "/token", method = "post")]
     async fn token(
         &self,
-        grant_type: Path<GrantType>,
+        grant_type: poem_openapi::param::Query<GrantType>,
         request: &Request,
         db: Data<&Db>,
     ) -> Result<Response<TokenResponse>> {
@@ -144,10 +144,12 @@ impl OauthApi {
             GrantType::Password => create_token_with_password(&request, &db).await,
         }?;
 
+        // let token = TokenResponse::InvalidRequest;
+
         Ok(Response::new(token).header("Cache-Control", "no-cache, no-store"))
     }
 }
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct TokenAuthCodeParams {
     code: String,
     redirect_uri: String,
@@ -156,13 +158,13 @@ struct TokenAuthCodeParams {
 }
 
 async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<TokenResponse> {
-    let Path(path): Path<TokenAuthCodeParams> = Path::from_request_without_body(request)
+    let Query(params): Query<TokenAuthCodeParams> = Query::from_request_without_body(request)
         .await
         .map_err(|_| TokenResponse::InvalidRequest)?;
 
-    let redirect_uri = Url::parse(&path.redirect_uri).map_err(|_| TokenResponse::InvalidGrant)?;
+    let redirect_uri = Url::parse(&params.redirect_uri).map_err(|_| TokenResponse::InvalidGrant)?;
 
-    let client = clients::find_by_id(path.client_id)
+    let client = clients::find_by_id(params.client_id)
         .one(&db.conn)
         .await
         .map_err(InternalServerError)?
@@ -170,7 +172,7 @@ async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<Token
 
     // Check if the client secret matches
     if !hashing::verify(
-        path.client_secret.as_bytes(),
+        params.client_secret.as_bytes(),
         &hashing::parse_hash(client.secret.as_str())?,
     ) {
         return Ok(TokenResponse::InvalidClient);
@@ -185,8 +187,8 @@ async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<Token
     }
 
     let token_request = token_requests::Entity::find()
-        .filter(token_requests::Column::Code.eq(path.code.clone()))
-        .filter(tokens::Column::ClientId.eq(path.client_id.clone()))
+        .filter(token_requests::Column::Code.eq(params.code.clone()))
+        .filter(tokens::Column::ClientId.eq(params.client_id.clone()))
         .one(&db.conn)
         .await
         .map_err(InternalServerError)?
@@ -239,11 +241,11 @@ struct TokenPasswordParams {
 }
 
 async fn create_token_with_password(request: &Request, db: &Db) -> Result<TokenResponse> {
-    let Path(path): Path<TokenPasswordParams> = Path::from_request_without_body(request)
+    let Query(params): Query<TokenPasswordParams> = Query::from_request_without_body(request)
         .await
         .map_err(|_| TokenResponse::InvalidRequest)?;
 
-    let client = clients::find_by_id(path.client_id)
+    let client = clients::find_by_id(params.client_id)
         .one(&db.conn)
         .await
         .map_err(InternalServerError)?
@@ -251,7 +253,7 @@ async fn create_token_with_password(request: &Request, db: &Db) -> Result<TokenR
 
     // Check if the client secret matches
     if !hashing::verify(
-        path.client_secret.as_bytes(),
+        params.client_secret.as_bytes(),
         &hashing::parse_hash(client.secret.as_str())?,
     ) {
         return Ok(TokenResponse::InvalidClient);
@@ -262,7 +264,7 @@ async fn create_token_with_password(request: &Request, db: &Db) -> Result<TokenR
         return Ok(TokenResponse::UnauthorizedClient);
     }
 
-    let user = users::find_by_username(path.username)
+    let user = users::find_by_username(params.username)
         .one(&db.conn)
         .await
         .map_err(InternalServerError)?
@@ -270,20 +272,20 @@ async fn create_token_with_password(request: &Request, db: &Db) -> Result<TokenR
 
     // Check if the client secret matches
     if !hashing::verify(
-        path.password.as_bytes(),
+        params.password.as_bytes(),
         &hashing::parse_hash(&user.password_hash)?,
     ) {
         return Ok(TokenResponse::InvalidClient);
     }
 
-    verify_password(&user, path.password.as_bytes())?.map_err(|_| TokenResponse::InvalidGrant)?;
+    verify_password(&user, params.password.as_bytes())?.map_err(|_| TokenResponse::InvalidGrant)?;
 
     // ! Add scopes to Access Token JWT
-    // if let Some(scope) = path.scope {
+    // if let Some(scope) = params.scope {
     // }
 
     let (access_token, access_token_expires_at) =
-        generate_access_token_jwt(&client.id, &user.id.to_string(), path.scope)?;
+        generate_access_token_jwt(&client.id, &user.id.to_string(), params.scope)?;
     let (refresh_token, refresh_token_expires_at) = generate_refresh_token();
 
     tokens::ActiveModel {
@@ -320,11 +322,11 @@ struct TokenClientCredsParams {
 }
 
 async fn create_token_with_client_creds(request: &Request, db: &Db) -> Result<TokenResponse> {
-    let Path(path): Path<TokenClientCredsParams> = Path::from_request_without_body(request)
+    let Query(params): Query<TokenClientCredsParams> = Query::from_request_without_body(request)
         .await
         .map_err(|_| TokenResponse::InvalidRequest)?;
 
-    let client = clients::find_by_id(path.client_id)
+    let client = clients::find_by_id(params.client_id)
         .one(&db.conn)
         .await
         .map_err(InternalServerError)?
@@ -332,7 +334,7 @@ async fn create_token_with_client_creds(request: &Request, db: &Db) -> Result<To
 
     // Check if the client secret matches
     if !hashing::verify(
-        path.client_secret.as_bytes(),
+        params.client_secret.as_bytes(),
         &hashing::parse_hash(client.secret.as_str())?,
     ) {
         return Ok(TokenResponse::InvalidClient);
@@ -347,7 +349,7 @@ async fn create_token_with_client_creds(request: &Request, db: &Db) -> Result<To
     }
 
     let (access_token, access_token_expires_at) =
-        generate_access_token_jwt(&client.id, &client.id.to_string(), path.scope)?;
+        generate_access_token_jwt(&client.id, &client.id.to_string(), params.scope)?;
     let (refresh_token, refresh_token_expires_at) = generate_refresh_token();
 
     tokens::ActiveModel {
