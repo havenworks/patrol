@@ -87,7 +87,7 @@ enum TokenResponse {
 #[derive(Object)]
 pub struct TokenResponseType {
     pub access_token: String,
-    pub refresh_token: String,
+    pub refresh_token: Option<String>,
     pub token_type: String,
     pub expires_in: String,
 }
@@ -137,9 +137,7 @@ impl OauthApi {
         // ! Check grant_type here and return appropriate error message (invalid_grant)
         let token = match *grant_type {
             GrantType::AuthCode => create_token_with_auth_code(&request, &db).await,
-            GrantType::ClientCreds => {
-                todo!()
-            }
+            GrantType::ClientCreds => create_token_with_client_creds(&request, &db).await,
             GrantType::Implicit => {
                 todo!()
             }
@@ -201,11 +199,11 @@ async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<Token
         return Ok(TokenResponse::InvalidGrant);
     }
 
-    let (access_token, access_token_expires_at) = generate_access_token_jwt(
-        &client.id,
-        &token_request.user_id.to_string(),
-        "scope".to_string(),
-    )?;
+    // ! Implement scope checking
+    let scope: Option<String> = None;
+
+    let (access_token, access_token_expires_at) =
+        generate_access_token_jwt(&client.id, &token_request.user_id.to_string(), scope)?;
     let (refresh_token, refresh_token_expires_at) = generate_refresh_token();
 
     tokens::ActiveModel {
@@ -223,7 +221,7 @@ async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<Token
 
     let token_response = TokenResponseType {
         access_token,
-        refresh_token,
+        refresh_token: Some(refresh_token),
         expires_in: ACCESS_KEY_EXPIRY.to_string(),
         token_type: ACCESS_KEY_TYPE.to_string(),
     };
@@ -285,7 +283,7 @@ async fn create_token_with_password(request: &Request, db: &Db) -> Result<TokenR
     // }
 
     let (access_token, access_token_expires_at) =
-        generate_access_token_jwt(&client.id, &user.id.to_string(), "scope".to_string())?;
+        generate_access_token_jwt(&client.id, &user.id.to_string(), path.scope)?;
     let (refresh_token, refresh_token_expires_at) = generate_refresh_token();
 
     tokens::ActiveModel {
@@ -306,12 +304,73 @@ async fn create_token_with_password(request: &Request, db: &Db) -> Result<TokenR
 
     let token_response = TokenResponseType {
         access_token,
-        refresh_token,
+        refresh_token: Some(refresh_token),
         expires_in: ACCESS_KEY_EXPIRY.to_string(),
         token_type: ACCESS_KEY_TYPE.to_string(),
     };
 
     return Ok(TokenResponse::Success(Json(token_response)));
+}
+
+#[derive(Deserialize)]
+struct TokenClientCredsParams {
+    scope: Option<String>,
+    client_id: Uuid,
+    client_secret: String,
+}
+
+async fn create_token_with_client_creds(request: &Request, db: &Db) -> Result<TokenResponse> {
+    let Path(path): Path<TokenClientCredsParams> = Path::from_request_without_body(request)
+        .await
+        .map_err(|_| TokenResponse::InvalidRequest)?;
+
+    let client = clients::find_by_id(path.client_id)
+        .one(&db.conn)
+        .await
+        .map_err(InternalServerError)?
+        .ok_or(TokenResponse::InvalidClient)?;
+
+    // Check if the client secret matches
+    if !hashing::verify(
+        path.client_secret.as_bytes(),
+        &hashing::parse_hash(client.secret.as_str())?,
+    ) {
+        return Ok(TokenResponse::InvalidClient);
+    }
+
+    // Check if the client is allowed to use the grant type
+    if !client
+        .grant_types
+        .contains(&"client_credentials".to_string())
+    {
+        return Ok(TokenResponse::UnauthorizedClient);
+    }
+
+    let (access_token, access_token_expires_at) =
+        generate_access_token_jwt(&client.id, &client.id.to_string(), path.scope)?;
+    let (refresh_token, refresh_token_expires_at) = generate_refresh_token();
+
+    tokens::ActiveModel {
+        access_key: Set(access_token.clone()),
+        access_key_expires_at: Set(access_token_expires_at),
+
+        refresh_key: Set(refresh_token.clone()),
+        refresh_key_expires_at: Set(refresh_token_expires_at),
+
+        ..tokens::ActiveModel::new()
+    }
+    .insert(&db.conn)
+    .await
+    .map_err(InternalServerError)?;
+
+    let token_response = TokenResponseType {
+        access_token,
+        refresh_token: None,
+        expires_in: ACCESS_KEY_EXPIRY.to_string(),
+        token_type: ACCESS_KEY_TYPE.to_string(),
+    };
+
+    Ok(TokenResponse::Success(Json(token_response)))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -320,7 +379,7 @@ struct AccessTokenClaims {
     aud: String,
     sub: String,
     client_id: String,
-    scope: String,
+    scope: Option<String>,
     jti: String,
     exp: i64,
     iat: i64,
@@ -329,7 +388,7 @@ struct AccessTokenClaims {
 fn generate_access_token_jwt(
     client_id: &Uuid,
     sub: &String,
-    scope: String,
+    scope: Option<String>,
 ) -> Result<(String, DateTime<Utc>)> {
     let mut header = Header::new(Algorithm::RS256);
 
