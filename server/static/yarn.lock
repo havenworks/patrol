@@ -17,6 +17,11 @@
     minimatch "^3.1.2"
     strip-json-comments "^3.1.1"
 
+"@havenworks/prettier-standard-config@^1.1.1":
+  version "1.1.1"
+  resolved "https://registry.yarnpkg.com/@havenworks/prettier-standard-config/-/prettier-standard-config-1.1.1.tgz#9815acfbb713a43b597d1e50c49bb2fcba346612"
+  integrity sha512-A4KibwRWgONrE+4sPPRWBPuRb1XQuBN/PPu24BHr86szbWEO3IJOlfODi3LdiGVPod5Xo/mWT+G7C653pNdRKg==
+
 "@humanwhocodes/config-array@^0.11.6":
   version "0.11.7"
   resolved "https://registry.yarnpkg.com/@humanwhocodes/config-array/-/config-array-0.11.7.tgz#38aec044c6c828f6ed51d5d7ae3d9b9faf6dbb0f"

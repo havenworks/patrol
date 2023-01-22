@@ -19,10 +19,13 @@ pub struct Model {
 
     pub profile_picture: Option<String>,
 
+    #[oai(skip)]
     #[serde(skip_serializing)]
     pub password_hash: String,
+    #[oai(skip)]
     #[serde(skip_serializing)]
     pub password_hash_previous: Option<String>,
+    #[oai(skip)]
     #[serde(skip_serializing)]
     pub password_changed_at: DateTimeUtc,
 
@@ -72,10 +75,6 @@ impl ActiveModelBehavior for ActiveModel {
             ..ActiveModelTrait::default()
         }
     }
-}
-
-pub fn find_by_id(id: Uuid) -> Select<Entity> {
-    Entity::find_by_id(id)
 }
 
 pub fn find_by_username(username: String) -> Select<Entity> {

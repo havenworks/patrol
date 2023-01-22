@@ -11,16 +11,13 @@ use super::{AuthAdmin, AuthUser, Resources};
 use anyhow::anyhow;
 use argon2::password_hash::SaltString;
 use argon2::PasswordVerifier;
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher},
-    Argon2,
-};
+use argon2::{password_hash::rand_core::OsRng, Argon2};
 use chrono::Utc;
+use log::debug;
 use poem::error::InternalServerError;
 use poem::web::cookie::{Cookie, CookieJar};
 use poem::web::Data;
 use poem::Result;
-use poem_openapi::param::Path;
 use poem_openapi::{payload::Json, ApiResponse, Enum, Object, OpenApi};
 use rand::RngCore;
 use sea_orm::prelude::DateTimeUtc;
@@ -225,10 +222,29 @@ impl UserApi {
 
         let mut cookie = Cookie::new_with_str("_patrol_key", token);
         cookie.set_max_age(Duration::from_secs(MAX_AGE));
+        cookie.set_path("/");
 
         cookies.add(cookie);
 
         Ok(LoginResponse::LoggedIn(Json(user)))
+    }
+
+    #[oai(path = "/logout", method = "delete")]
+    async fn logout(&self, cookies: &CookieJar, db: Data<&Db>) -> Result<()> {
+        if let Some(token) = cookies.get("_patrol_key") {
+            debug!("token: {:?}", token.value_str());
+            debug!("token: {:?}", token.expires());
+            user_tokens::delete_by_value(token.value_str())
+                .exec(&db.conn)
+                .await
+                .map_err(InternalServerError)?;
+
+            cookies.remove("_patrol_key");
+
+            return Ok(());
+        }
+
+        Err(anyhow!("Failed to logout").into())
     }
 }
 

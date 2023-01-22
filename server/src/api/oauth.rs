@@ -76,9 +76,8 @@ impl OauthApi {
         // registered for the client
         let redirect_uri =
             Url::parse(&redirect_uri).map_err(|_| AuthorizeResponse::InvalidRedirectUri)?;
-        
 
-        client.redirect_uris.iter()
+        client.redirect_uris.iter();
 
         Ok(Response::new(AuthorizeResponse::Redirect).header(header::LOCATION, "/"))
     }

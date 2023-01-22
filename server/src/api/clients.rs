@@ -1,11 +1,11 @@
 use crate::{models::clients, Db};
 
-use super::{crypto, AuthAdmin};
+use super::{crypto, AuthAdmin, Resources};
 use argon2::password_hash::SaltString;
 use poem::{error::InternalServerError, web::Data, Result};
 use poem_openapi::{payload::Json, ApiResponse, Object, OpenApi};
 use rsa::rand_core::OsRng;
-use sea_orm::{ActiveModelBehavior, ActiveModelTrait, Set};
+use sea_orm::{ActiveModelBehavior, ActiveModelTrait, EntityTrait, Set};
 
 pub struct ClientApi;
 
@@ -25,6 +25,12 @@ pub struct NewClient {
 pub enum CreateClientResponse {
     #[oai(status = 201)]
     Created(Json<clients::Model>),
+}
+
+#[derive(ApiResponse)]
+pub enum ListClientResponse {
+    #[oai(status = 200)]
+    Ok(Json<Vec<clients::Model>>),
 }
 
 #[OpenApi(prefix_path = "/api/clients", tag = "Resources::Clients")]
@@ -57,5 +63,15 @@ impl ClientApi {
         .map_err(InternalServerError)?;
 
         Ok(CreateClientResponse::Created(Json(client)))
+    }
+
+    #[oai(path = "/clients", method = "get")]
+    async fn list(&self, _admin: AuthAdmin, db: Data<&Db>) -> Result<ListClientResponse> {
+        let clients = clients::Entity::find()
+            .all(&db.conn)
+            .await
+            .map_err(InternalServerError)?;
+
+        Ok(ListClientResponse::Ok(Json(clients)))
     }
 }
