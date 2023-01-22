@@ -38,7 +38,7 @@ impl ClientApi {
     #[oai(path = "/", method = "post")]
     async fn create(
         &self,
-        _: AuthLoggedIn,
+        _auth: AuthLoggedIn,
         new_client: Json<NewClient>,
         db: Data<&Db>,
     ) -> Result<CreateClientResponse> {
