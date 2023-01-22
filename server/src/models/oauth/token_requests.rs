@@ -50,6 +50,10 @@ impl ActiveModelBehavior for ActiveModel {
     }
 }
 
+pub fn find_by_code<S: Into<String>>(code: S) -> Select<Entity> {
+    Entity::find_by_id(code.into())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Enum)]
 #[oai(rename_all = "snake_case")]
 pub enum CodeChallengeMethod {

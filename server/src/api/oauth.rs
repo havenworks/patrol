@@ -4,11 +4,10 @@ use crate::{
     api::Resources,
     models::{
         clients::{self, GrantType},
-        oauth::{token_requests::CodeChallengeMethod, tokens::ACCESS_KEY_TYPE},
-    },
-    models::{
-        oauth::token_requests,
-        oauth::tokens::{self, ACCESS_KEY_EXPIRY, REFRESH_KEY_EXPIRY},
+        oauth::{
+            token_requests::{self, CodeChallengeMethod},
+            tokens::{self, ACCESS_KEY_EXPIRY, ACCESS_KEY_TYPE, REFRESH_KEY_EXPIRY},
+        },
         users,
     },
     Db,
@@ -16,20 +15,19 @@ use crate::{
 
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-use log::debug;
 use poem::{
     error::{InternalServerError, Result},
     http::header,
-    web::{Data, Path, Query},
-    Body, FromRequest, Request,
+    web::{self, Data, Path},
+    FromRequest, Request,
 };
 use poem_openapi::{
-    param,
-    payload::{Json, PlainText, Response},
-    ApiExtractor, ApiResponse, Enum, ExtractParamOptions, Object, OpenApi,
+    param::Query,
+    payload::{Json, Response},
+    ApiResponse, Enum, Object, OpenApi,
 };
 use rand::distributions::{Alphanumeric, DistString};
-use sea_orm::{ActiveModelBehavior, ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelBehavior, ActiveModelTrait, ColumnTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
@@ -132,7 +130,7 @@ impl OauthApi {
     #[oai(path = "/token", method = "post")]
     async fn token(
         &self,
-        grant_type: param::Query<String>,
+        grant_type: Query<String>,
         request: &Request,
         db: Data<&Db>,
     ) -> Result<Response<TokenResponse>> {
@@ -160,36 +158,26 @@ struct TokenAuthCodeParams {
 }
 
 async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<TokenResponse> {
-    let Query(params): Query<TokenAuthCodeParams> = Query::from_request_without_body(request)
-        .await
-        .map_err(|_| TokenResponse::InvalidRequest)?;
+    let web::Query(params): web::Query<TokenAuthCodeParams> =
+        web::Query::from_request_without_body(request)
+            .await
+            .map_err(|_| TokenResponse::InvalidRequest)?;
 
     let redirect_uri = Url::parse(&params.redirect_uri).map_err(|_| TokenResponse::InvalidGrant)?;
 
-    let client = clients::find_by_id(params.client_id)
-        .one(&db.conn)
-        .await
-        .map_err(InternalServerError)?
-        .ok_or(TokenResponse::InvalidClient)?;
-
-    // Check if the client secret matches
-    if !hashing::verify(
-        params.client_secret.as_bytes(),
-        &hashing::parse_hash(client.secret.as_str())?,
-    ) {
-        return Ok(TokenResponse::InvalidClient);
-    }
-
-    // Check if the client is allowed to use the grant type
-    if !client
-        .grant_types
-        .contains(&"authorization_code".to_string())
+    let client = match find_matching_client(
+        params.client_id,
+        params.client_secret,
+        "authorization_code",
+        &db,
+    )
+    .await?
     {
-        return Ok(TokenResponse::UnauthorizedClient);
-    }
+        Ok(client) => client,
+        Err(response) => return Ok(response),
+    };
 
-    let token_request = token_requests::Entity::find()
-        .filter(token_requests::Column::Code.eq(params.code.clone()))
+    let token_request = token_requests::find_by_code(params.code)
         .filter(tokens::Column::ClientId.eq(params.client_id.clone()))
         .one(&db.conn)
         .await
@@ -233,7 +221,7 @@ async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<Token
         return Ok(TokenResponse::InvalidGrant);
     }
 
-    // ! Implement scope checking
+    // TODO: Implement scope checking
     let scope: Option<String> = None;
 
     let (access_token, access_token_expires_at) =
@@ -273,28 +261,17 @@ struct TokenPasswordParams {
 }
 
 async fn create_token_with_password(request: &Request, db: &Db) -> Result<TokenResponse> {
-    let Query(params): Query<TokenPasswordParams> = Query::from_request_without_body(request)
-        .await
-        .map_err(|_| TokenResponse::InvalidRequest)?;
+    let web::Query(params): web::Query<TokenPasswordParams> =
+        web::Query::from_request_without_body(request)
+            .await
+            .map_err(|_| TokenResponse::InvalidRequest)?;
 
-    let client = clients::find_by_id(params.client_id)
-        .one(&db.conn)
-        .await
-        .map_err(InternalServerError)?
-        .ok_or(TokenResponse::InvalidClient)?;
-
-    // Check if the client secret matches
-    if !hashing::verify(
-        params.client_secret.as_bytes(),
-        &hashing::parse_hash(client.secret.as_str())?,
-    ) {
-        return Ok(TokenResponse::InvalidClient);
-    }
-
-    // Check if the client is allowed to use the grant type
-    if !client.grant_types.contains(&"password".to_string()) {
-        return Ok(TokenResponse::UnauthorizedClient);
-    }
+    let client = match find_matching_client(params.client_id, params.client_secret, "password", &db)
+        .await?
+    {
+        Ok(client) => client,
+        Err(response) => return Ok(response),
+    };
 
     let user = users::find_by_username(params.username)
         .one(&db.conn)
@@ -354,31 +331,22 @@ struct TokenClientCredsParams {
 }
 
 async fn create_token_with_client_creds(request: &Request, db: &Db) -> Result<TokenResponse> {
-    let Query(params): Query<TokenClientCredsParams> = Query::from_request_without_body(request)
-        .await
-        .map_err(|_| TokenResponse::InvalidRequest)?;
+    let web::Query(params): web::Query<TokenClientCredsParams> =
+        web::Query::from_request_without_body(request)
+            .await
+            .map_err(|_| TokenResponse::InvalidRequest)?;
 
-    let client = clients::find_by_id(params.client_id)
-        .one(&db.conn)
-        .await
-        .map_err(InternalServerError)?
-        .ok_or(TokenResponse::InvalidClient)?;
-
-    // Check if the client secret matches
-    if !hashing::verify(
-        params.client_secret.as_bytes(),
-        &hashing::parse_hash(client.secret.as_str())?,
-    ) {
-        return Ok(TokenResponse::InvalidClient);
-    }
-
-    // Check if the client is allowed to use the grant type
-    if !client
-        .grant_types
-        .contains(&"client_credentials".to_string())
+    let client = match find_matching_client(
+        params.client_id,
+        params.client_secret,
+        "client_credentials",
+        &db,
+    )
+    .await?
     {
-        return Ok(TokenResponse::UnauthorizedClient);
-    }
+        Ok(client) => client,
+        Err(response) => return Ok(response),
+    };
 
     let (access_token, access_token_expires_at) =
         generate_access_token_jwt(&client.id, &client.id.to_string(), params.scope)?;
@@ -460,4 +428,32 @@ fn generate_refresh_token() -> (String, DateTime<Utc>) {
     let expires_at = Utc::now() + Duration::seconds(REFRESH_KEY_EXPIRY);
 
     (token, expires_at)
+}
+
+async fn find_matching_client(
+    client_id: Uuid,
+    client_secret: String,
+    grant_type: &str,
+    db: &Db,
+) -> Result<std::result::Result<clients::Model, TokenResponse>> {
+    let client = clients::find_by_id(client_id)
+        .one(&db.conn)
+        .await
+        .map_err(InternalServerError)?
+        .ok_or(TokenResponse::InvalidClient)?;
+
+    // Check if the client secret matches
+    if !hashing::verify(
+        client_secret.as_bytes(),
+        &hashing::parse_hash(client.secret.as_str())?,
+    ) {
+        return Ok(Err(TokenResponse::InvalidClient));
+    }
+
+    // Check if the client is allowed to use the grant type
+    if !client.grant_types.contains(&grant_type.to_string()) {
+        return Ok(Err(TokenResponse::UnauthorizedClient));
+    }
+
+    Ok(Ok(client))
 }
