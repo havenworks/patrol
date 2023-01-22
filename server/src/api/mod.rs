@@ -86,7 +86,7 @@ async fn auth_user(request: &Request, _: ApiKey) -> Option<User> {
     key_name = "patrol_session",
     checker = "optional_auth_user"
 )]
-pub struct OptinalAuthUser(Option<User>);
+pub struct OptionalAuthUser(Option<User>);
 
 async fn optional_auth_user(request: &Request, api_key: ApiKey) -> Option<Option<User>> {
     Some(auth_user(request, api_key).await)
