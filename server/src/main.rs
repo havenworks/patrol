@@ -94,12 +94,11 @@ async fn main() -> anyhow::Result<()> {
         .nest("/api/swagger", ui)
         .nest("/api/openapi.json", spec)
         .nest_no_strip(
-            "/api",
-            service
-                .data(Db { conn: conn.clone() })
-                .data(db::is_first_admin_registered(&Db { conn }).await?),
+            "/<(api|oauth)>",
+            service.data(db::is_first_admin_registered(&Db { conn: conn.clone() }).await?),
         )
         .nest("/", static_files::static_routes())
+        .data(Db { conn: conn.clone() })
         .with(CookieSession::new(
             CookieConfig::default()
                 .name("patrol_session")

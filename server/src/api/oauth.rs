@@ -1,7 +1,7 @@
 use std::{ops::Deref, str::FromStr};
 
 use crate::{
-    api::Resources,
+    api::{auth_user, request_session, try_me_bitch, Resources},
     models::{
         clients::{self, GrantType},
         oauth::{
@@ -22,6 +22,7 @@ use poem::{
     FromRequest, Request,
 };
 use poem_openapi::{
+    auth::ApiKey,
     param::Query,
     payload::{Json, Response},
     ApiResponse, Enum, Object, OpenApi,
@@ -33,11 +34,11 @@ use sha2::{Digest, Sha256};
 use url::Url;
 use uuid::Uuid;
 
-use super::{crypto::hashing, users::verify_password};
+use super::{crypto::hashing, users::verify_password, OptionalAuthUser};
 
 pub struct OauthApi;
 
-#[derive(Copy, Clone, Enum, Deserialize)]
+#[derive(Copy, Clone, Enum, Deserialize, PartialEq)]
 #[oai(rename_all = "snake_case")]
 enum ResponseType {
     Code,
@@ -54,6 +55,15 @@ impl ResponseType {
     }
 }
 
+#[derive(Object)]
+struct ImplicitGrantResponse {
+    access_token: String,
+    token_type: String,
+    expires_in: String,
+    scope: Option<String>,
+    state: Option<String>,
+}
+
 #[derive(ApiResponse)]
 enum AuthorizeResponse {
     #[oai(status = 404)]
@@ -64,6 +74,8 @@ enum AuthorizeResponse {
     InvalidRedirectUri,
     #[oai(status = 307)]
     Redirect,
+    #[oai(status = 200)]
+    Token(Json<ImplicitGrantResponse>),
 }
 
 #[derive(ApiResponse)]
@@ -107,9 +119,10 @@ impl OauthApi {
         request: &Request,
         db: Data<&Db>,
     ) -> Result<Response<AuthorizeResponse>> {
-        let user_signed_in = false;
-
         // localhost:8000/oauth/authorize?response_type=code&client_id=dbe3cb01-6b60-4a19-a60c-5629a48d9ec5&redirect_uri=http://localhost:1234/oauth/callback&code_challenge=ahojda
+
+        // ! Used for development until @michaljanocko fixes the SecurityScheme bullshit.
+        let user: Option<users::Model> = try_me_bitch(request, &db).await;
 
         // Parse the redirect URI and check if it matches any of the URIs
         // registered for the client
@@ -138,15 +151,50 @@ impl OauthApi {
             return Ok(Response::new(AuthorizeResponse::GrantTypeNotAllowed));
         }
 
-        if !user_signed_in {
-            let mut login_page = Url::parse("http://localhost:8000").unwrap();
-            login_page
-                .query_pairs_mut()
-                .append_pair("client_id", client.id.to_string().as_str())
-                .append_pair("return_to", request.original_uri().to_string().as_str());
+        let user = match user {
+            None => {
+                let mut login_page = Url::parse("http://localhost:8000").unwrap();
+                login_page
+                    .query_pairs_mut()
+                    .append_pair("client_id", client.id.to_string().as_str())
+                    .append_pair("return_to", request.original_uri().to_string().as_str());
 
-            return Ok(Response::new(AuthorizeResponse::Redirect)
-                .header(header::LOCATION, login_page.to_string()));
+                return Ok(Response::new(AuthorizeResponse::Redirect)
+                    .header(header::LOCATION, login_page.to_string()));
+            }
+            Some(user) => user,
+        };
+
+        if *response_type == ResponseType::Token {
+            let (access_token, access_token_expires_at) =
+                generate_access_token_jwt(&client.id, &user.id.to_string(), scope.clone())?;
+
+            tokens::ActiveModel {
+                access_key: Set(access_token.clone()),
+                access_key_expires_at: Set(access_token_expires_at),
+
+                refresh_key: Set(None),
+                refresh_key_expires_at: Set(None),
+
+                client_id: Set(client.id),
+                user_id: Set(Some(user.id)),
+
+                ..tokens::ActiveModel::new()
+            }
+            .insert(&db.conn)
+            .await
+            .map_err(InternalServerError)?;
+
+            let response = ImplicitGrantResponse {
+                access_token,
+                expires_in: ACCESS_KEY_EXPIRY.to_string(),
+                token_type: ACCESS_KEY_TYPE.to_string(),
+                scope: scope.clone(),
+                state: state.clone(),
+            };
+
+            return Ok(Response::new(AuthorizeResponse::Token(Json(response)))
+                .header("cache-control", "no-store, no-cache"));
         }
 
         let code_challenge_method = CodeChallengeMethod::from_str(
@@ -167,6 +215,7 @@ impl OauthApi {
             code_challenge_method: Set(code_challenge_method.to_string()),
 
             client_id: Set(client.id.clone()),
+            user_id: Set(user.id.clone()),
 
             ..token_requests::ActiveModel::new()
         }
@@ -284,8 +333,11 @@ async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<Token
         access_key: Set(access_token.clone()),
         access_key_expires_at: Set(access_token_expires_at),
 
-        refresh_key: Set(refresh_token.clone()),
-        refresh_key_expires_at: Set(refresh_token_expires_at),
+        refresh_key: Set(Some(refresh_token.clone())),
+        refresh_key_expires_at: Set(Some(refresh_token_expires_at)),
+
+        client_id: Set(client.id),
+        user_id: Set(Some(token_request.user_id)),
 
         ..tokens::ActiveModel::new()
     }
@@ -353,11 +405,11 @@ async fn create_token_with_password(request: &Request, db: &Db) -> Result<TokenR
         access_key: Set(access_token.clone()),
         access_key_expires_at: Set(access_token_expires_at),
 
-        refresh_key: Set(refresh_token.clone()),
-        refresh_key_expires_at: Set(refresh_token_expires_at),
+        refresh_key: Set(Some(refresh_token.clone())),
+        refresh_key_expires_at: Set(Some(refresh_token_expires_at)),
 
         client_id: Set(client.id),
-        user_id: Set(user.id),
+        user_id: Set(Some(user.id)),
 
         ..tokens::ActiveModel::new()
     }
@@ -408,8 +460,11 @@ async fn create_token_with_client_creds(request: &Request, db: &Db) -> Result<To
         access_key: Set(access_token.clone()),
         access_key_expires_at: Set(access_token_expires_at),
 
-        refresh_key: Set(refresh_token.clone()),
-        refresh_key_expires_at: Set(refresh_token_expires_at),
+        refresh_key: Set(Some(refresh_token.clone())),
+        refresh_key_expires_at: Set(Some(refresh_token_expires_at)),
+
+        client_id: Set(client.id),
+        user_id: Set(None),
 
         ..tokens::ActiveModel::new()
     }

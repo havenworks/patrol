@@ -34,8 +34,8 @@ CREATE TABLE oauth_tokens (
   access_key TEXT PRIMARY KEY,
   access_key_expires_at TIMESTAMPTZ NOT NULL,
 
-  refresh_key TEXT NOT NULL UNIQUE,
-  refresh_key_expires_at TIMESTAMPTZ NOT NULL,
+  refresh_key TEXT UNIQUE,
+  refresh_key_expires_at TIMESTAMPTZ,
 
   user_id UUID REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE,
   client_id UUID REFERENCES clients (id) ON UPDATE CASCADE ON DELETE CASCADE,

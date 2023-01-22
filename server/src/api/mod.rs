@@ -35,7 +35,7 @@ pub const SERVICES: (
     well_known::WellKnownApi,
 );
 
-fn req_db_pool(req: &Request) -> &Db {
+fn request_db(req: &Request) -> &Db {
     req.data::<&Db>()
         .expect("Could not extract the db pool from the request")
 }
@@ -66,10 +66,21 @@ async fn auth_logged_in(request: &Request, _: ApiKey) -> Option<()> {
 )]
 pub struct AuthUser(User);
 
-async fn auth_user(request: &Request, _: ApiKey) -> Option<User> {
+pub async fn auth_user(request: &Request, _: ApiKey) -> Option<User> {
     let token = request_session(request)?.get::<String>("token")?;
 
-    let db = req_db_pool(request);
+    let db = request_db(request);
+
+    user_tokens::find_by_value(token)
+        .find_also_related(models::users::Entity)
+        .one(&db.conn)
+        .await
+        .ok()??
+        .1
+}
+
+pub async fn try_me_bitch(request: &Request, db: &Db) -> Option<User> {
+    let token = request_session(request)?.get::<String>("token")?;
 
     user_tokens::find_by_value(token)
         .find_also_related(models::users::Entity)
