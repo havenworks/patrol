@@ -38,6 +38,10 @@ impl ActiveModelBehavior for ActiveModel {
     }
 }
 
+pub fn find_by_value<S: Into<String>>(value: S) -> Select<Entity> {
+    Entity::find_by_id(value.into())
+}
+
 pub fn delete_by_value<S: Into<String>>(value: S) -> DeleteMany<Entity> {
     Entity::delete_by_id(value.into())
 }

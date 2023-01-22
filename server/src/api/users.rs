@@ -6,17 +6,15 @@ use crate::{Db, MAX_AGE};
 
 use super::crypto;
 use super::error::ApiError;
-use super::{AuthAdmin, AuthUser, Resources};
+use super::{AuthUser, Resources};
 
 use anyhow::anyhow;
 use argon2::password_hash::SaltString;
 use argon2::PasswordVerifier;
 use argon2::{password_hash::rand_core::OsRng, Argon2};
 use chrono::Utc;
-use log::debug;
 use poem::error::InternalServerError;
 use poem::session::Session;
-use poem::web::cookie::{Cookie, CookieJar};
 use poem::web::Data;
 use poem::Result;
 use poem_openapi::{payload::Json, ApiResponse, Enum, Object, OpenApi};
@@ -107,7 +105,7 @@ impl UserApi {
     #[oai(path = "/", method = "post")]
     async fn create(
         &self,
-        _admin: AuthAdmin,
+        _user: AuthUser,
         new_user: Json<NewUser>,
         is_first_admin_registered: Data<&FirstAdminRegistered>,
         db: Data<&Db>,

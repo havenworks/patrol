@@ -1,6 +1,6 @@
 use crate::{models::clients, Db};
 
-use super::{crypto, AuthAdmin, Resources};
+use super::{crypto, AuthLoggedIn, Resources};
 use argon2::password_hash::SaltString;
 use poem::{error::InternalServerError, web::Data, Result};
 use poem_openapi::{payload::Json, ApiResponse, Object, OpenApi};
@@ -37,7 +37,7 @@ pub enum ListClientResponse {
 impl ClientApi {
     async fn create(
         &self,
-        _admin: AuthAdmin,
+        _: AuthLoggedIn,
         new_client: Json<NewClient>,
         db: Data<&Db>,
     ) -> Result<CreateClientResponse> {
@@ -66,7 +66,7 @@ impl ClientApi {
     }
 
     #[oai(path = "/clients", method = "get")]
-    async fn list(&self, _admin: AuthAdmin, db: Data<&Db>) -> Result<ListClientResponse> {
+    async fn list(&self, _auth: AuthLoggedIn, db: Data<&Db>) -> Result<ListClientResponse> {
         let clients = clients::Entity::find()
             .all(&db.conn)
             .await
