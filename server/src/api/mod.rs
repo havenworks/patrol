@@ -64,22 +64,30 @@ async fn auth_logged_in(request: &Request, _: ApiKey) -> Option<()> {
     key_name = "patrol_session",
     checker = "auth_user"
 )]
-pub struct AuthUser(Option<User>);
+pub struct AuthUser(User);
 
-async fn auth_user(request: &Request, _: ApiKey) -> Option<Option<User>> {
-    let token = match request_session(request)?.get::<String>("token") {
-        Some(token) => token,
-        None => return Some(None),
-    };
+async fn auth_user(request: &Request, _: ApiKey) -> Option<User> {
+    let token = request_session(request)?.get::<String>("token")?;
 
     let db = req_db_pool(request);
 
-    let user = user_tokens::find_by_value(token)
+    user_tokens::find_by_value(token)
         .find_also_related(models::users::Entity)
         .one(&db.conn)
         .await
         .ok()??
-        .1;
+        .1
+}
 
-    Some(user)
+#[derive(SecurityScheme)]
+#[oai(
+    type = "api_key",
+    in = "cookie",
+    key_name = "patrol_session",
+    checker = "optional_auth_user"
+)]
+pub struct OptinalAuthUser(Option<User>);
+
+async fn optional_auth_user(request: &Request, api_key: ApiKey) -> Option<Option<User>> {
+    Some(auth_user(request, api_key).await)
 }
