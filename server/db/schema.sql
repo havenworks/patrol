@@ -20,7 +20,7 @@ SET default_table_access_method = heap;
 CREATE TABLE public.clients (
     id uuid NOT NULL,
     name text NOT NULL,
-    homepage_uri text,
+    homepage_url text,
     logo bytea NOT NULL,
     logo_uri text NOT NULL,
     secret text NOT NULL,
@@ -38,8 +38,8 @@ CREATE TABLE public.clients (
 CREATE TABLE public.oauth_token_requests (
     code text NOT NULL,
     redirect_uri text NOT NULL,
-    code_challenge text,
-    code_challenge_method text,
+    code_challenge text NOT NULL,
+    code_challenge_method text NOT NULL,
     user_id uuid,
     client_id uuid,
     created_at timestamp with time zone NOT NULL

@@ -13,8 +13,8 @@ pub struct Model {
     pub code: String,
     pub redirect_uri: String,
 
-    pub code_challenge: Option<String>,
-    pub code_challenge_method: Option<String>,
+    pub code_challenge: String,
+    pub code_challenge_method: String,
 
     pub created_at: DateTimeUtc,
 
@@ -70,5 +70,15 @@ impl FromStr for CodeChallengeMethod {
             "S256" => Ok(CodeChallengeMethod::S256),
             _ => Err(()),
         }
+    }
+}
+
+impl ToString for CodeChallengeMethod {
+    fn to_string(&self) -> String {
+        match self {
+            CodeChallengeMethod::Plain => "plain",
+            CodeChallengeMethod::S256 => "S256",
+        }
+        .to_string()
     }
 }

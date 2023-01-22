@@ -3,7 +3,7 @@ CREATE TABLE clients (
   id UUID PRIMARY KEY,
 
   name TEXT NOT NULL,
-  homepage_uri TEXT,
+  homepage_url TEXT,
   logo BYTEA NOT NULL,
   logo_uri TEXT NOT NULL,
 
@@ -21,8 +21,8 @@ CREATE TABLE oauth_token_requests (
   code TEXT PRIMARY KEY,
   redirect_uri TEXT NOT NULL,
 
-  code_challenge TEXT,
-  code_challenge_method TEXT,
+  code_challenge TEXT NOT NULL,
+  code_challenge_method TEXT NOT NULL,
 
   user_id UUID REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE,
   client_id UUID REFERENCES clients (id) ON UPDATE CASCADE ON DELETE CASCADE,

@@ -62,7 +62,7 @@ enum AuthorizeResponse {
     GrantTypeNotAllowed,
     #[oai(status = 400)]
     InvalidRedirectUri,
-    #[oai(status = 303)]
+    #[oai(status = 307)]
     Redirect,
 }
 
@@ -97,17 +97,38 @@ impl OauthApi {
     #[oai(path = "/authorize", method = "get")]
     async fn authorize(
         &self,
-        client_id: Path<Uuid>,
-        redirect_uri: Path<String>,
-        response_type: Path<ResponseType>,
+        response_type: Query<ResponseType>,
+        client_id: Query<Uuid>,
+        redirect_uri: Query<String>,
+        scope: Query<Option<String>>,
+        state: Query<Option<String>>,
+        code_challenge: Query<String>,
+        code_challenge_method: Query<Option<String>>,
+        request: &Request,
         db: Data<&Db>,
     ) -> Result<Response<AuthorizeResponse>> {
+        let user_signed_in = false;
+
+        // localhost:8000/oauth/authorize?response_type=code&client_id=dbe3cb01-6b60-4a19-a60c-5629a48d9ec5&redirect_uri=http://localhost:1234/oauth/callback&code_challenge=ahojda
+
+        // Parse the redirect URI and check if it matches any of the URIs
+        // registered for the client
+        let mut redirect_uri =
+            Url::parse(&redirect_uri).map_err(|_| AuthorizeResponse::InvalidRedirectUri)?;
+
         // Check if the client exists
         let client = clients::find_by_id(*client_id)
             .one(&db.conn)
             .await
             .map_err(InternalServerError)?
             .ok_or(AuthorizeResponse::NotFound)?;
+
+        if !client.redirect_uris.iter().any(|uri| {
+            let uri = Url::parse(uri).unwrap();
+            redirect_uri == uri
+        }) {
+            return Ok(Response::new(AuthorizeResponse::InvalidRedirectUri));
+        }
 
         // Check if the client is allowed to use the grant type
         if !client
@@ -117,19 +138,54 @@ impl OauthApi {
             return Ok(Response::new(AuthorizeResponse::GrantTypeNotAllowed));
         }
 
-        // Parse the redirect URI and check if it matches any of the URIs
-        // registered for the client
-        let redirect_uri =
-            Url::parse(&redirect_uri).map_err(|_| AuthorizeResponse::InvalidRedirectUri)?;
+        if !user_signed_in {
+            let mut login_page = Url::parse("http://localhost:8000").unwrap();
+            login_page
+                .query_pairs_mut()
+                .append_pair("client_id", client.id.to_string().as_str())
+                .append_pair("return_to", request.original_uri().to_string().as_str());
 
-        if !client.redirect_uris.iter().any(|uri| {
-            let uri = Url::parse(uri).unwrap();
-            redirect_uri == uri
-        }) {
-            return Ok(Response::new(AuthorizeResponse::InvalidRedirectUri));
+            return Ok(Response::new(AuthorizeResponse::Redirect)
+                .header(header::LOCATION, login_page.to_string()));
         }
 
-        Ok(Response::new(AuthorizeResponse::Redirect).header(header::LOCATION, "/"))
+        let code_challenge_method = CodeChallengeMethod::from_str(
+            (*code_challenge_method)
+                .clone()
+                .unwrap_or("plain".to_string())
+                .as_str(),
+        )
+        .map_err(|_| TokenResponse::InvalidRequest)?;
+
+        let code = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
+
+        token_requests::ActiveModel {
+            code: Set(code.clone()),
+            redirect_uri: Set(redirect_uri.to_string()),
+
+            code_challenge: Set(code_challenge.clone()),
+            code_challenge_method: Set(code_challenge_method.to_string()),
+
+            client_id: Set(client.id.clone()),
+
+            ..token_requests::ActiveModel::new()
+        }
+        .insert(&db.conn)
+        .await
+        .map_err(InternalServerError)?;
+
+        redirect_uri
+            .query_pairs_mut()
+            .append_pair("code", code.as_str());
+
+        if let Some(state) = state.deref() {
+            redirect_uri
+                .query_pairs_mut()
+                .append_pair("state", state.as_str());
+        }
+
+        Ok(Response::new(AuthorizeResponse::Redirect)
+            .header(header::LOCATION, redirect_uri.to_string()))
     }
 
     #[oai(path = "/token", method = "post")]
@@ -159,7 +215,7 @@ struct TokenAuthCodeParams {
     redirect_uri: String,
     client_id: Uuid,
     client_secret: String,
-    code_verifier: Option<String>,
+    code_verifier: String,
 }
 
 async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<TokenResponse> {
@@ -189,34 +245,25 @@ async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<Token
         .map_err(InternalServerError)?
         .ok_or(TokenResponse::InvalidGrant)?;
 
-    match (token_request.code_challenge, params.code_verifier) {
-        (Some(code_challenge), Some(code_verifier)) => {
-            let code_challenge_method = CodeChallengeMethod::from_str(
-                token_request
-                    .code_challenge_method
-                    .unwrap_or("plain".to_string())
-                    .as_str(),
-            )
+    let code_challenge_method =
+        CodeChallengeMethod::from_str(token_request.code_challenge_method.as_str())
             .map_err(|_| TokenResponse::InvalidRequest)?;
 
-            let challenge_successful = match code_challenge_method {
-                CodeChallengeMethod::Plain => code_challenge == code_verifier,
-                CodeChallengeMethod::S256 => {
-                    let mut hasher = Sha256::new();
-                    hasher.update(code_verifier.as_bytes());
-                    let hashed_code_verifier = hasher.finalize();
+    let challenge_successful = match code_challenge_method {
+        CodeChallengeMethod::Plain => token_request.code_challenge == params.code_verifier,
+        CodeChallengeMethod::S256 => {
+            let mut hasher = Sha256::new();
+            hasher.update(params.code_verifier.as_bytes());
+            let hashed_code_verifier = hasher.finalize();
 
-                    let encoded_code_verifier = base64_url::encode(hashed_code_verifier.as_slice());
+            let encoded_code_verifier = base64_url::encode(hashed_code_verifier.as_slice());
 
-                    code_challenge == encoded_code_verifier
-                }
-            };
-
-            if !challenge_successful {
-                return Ok(TokenResponse::InvalidGrant);
-            }
+            token_request.code_challenge == encoded_code_verifier
         }
-        _ => return Ok(TokenResponse::InvalidRequest),
+    };
+
+    if !challenge_successful {
+        return Ok(TokenResponse::InvalidGrant);
     }
 
     let authorize_redirect_uri =

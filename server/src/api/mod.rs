@@ -22,8 +22,17 @@ pub enum Resources {
     WellKnown,
 }
 
-pub const SERVICES: (oauth::OauthApi, users::UserApi, well_known::WellKnownApi) =
-    (oauth::OauthApi, users::UserApi, well_known::WellKnownApi);
+pub const SERVICES: (
+    clients::ClientApi,
+    oauth::OauthApi,
+    users::UserApi,
+    well_known::WellKnownApi,
+) = (
+    clients::ClientApi,
+    oauth::OauthApi,
+    users::UserApi,
+    well_known::WellKnownApi,
+);
 
 fn req_db_pool(req: &Request) -> &Db {
     req.data::<&Db>()

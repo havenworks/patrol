@@ -1,6 +1,6 @@
 use crate::{models::clients, Db};
 
-use super::{crypto, AuthAdmin};
+use super::{crypto, AuthAdmin, Resources};
 use argon2::password_hash::SaltString;
 use poem::{error::InternalServerError, web::Data, Result};
 use poem_openapi::{payload::Json, ApiResponse, Object, OpenApi};
@@ -13,7 +13,7 @@ pub struct ClientApi;
 pub struct NewClient {
     name: String,
     homepage_url: Option<String>,
-    logo: Vec<u8>,
+    // logo: Vec<u8>,
     logo_uri: String,
 
     secret: String,
@@ -29,6 +29,7 @@ pub enum CreateClientResponse {
 
 #[OpenApi(prefix_path = "/api/clients", tag = "Resources::Clients")]
 impl ClientApi {
+    #[oai(path = "/", method = "post")]
     async fn create(
         &self,
         _admin: AuthAdmin,
@@ -43,7 +44,8 @@ impl ClientApi {
         let client = clients::ActiveModel {
             name: Set(new_client.name.clone()),
             homepage_url: Set(new_client.homepage_url.clone()),
-            logo: Set(new_client.logo.clone()),
+            // logo: Set(new_client.logo.clone()),
+            logo: Set(Vec::new()),
             logo_uri: Set(new_client.logo_uri.clone()),
 
             secret: Set(secret_hash),
