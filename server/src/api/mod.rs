@@ -64,17 +64,22 @@ async fn auth_logged_in(request: &Request, _: ApiKey) -> Option<()> {
     key_name = "patrol_session",
     checker = "auth_user"
 )]
-pub struct AuthUser(User);
+pub struct AuthUser(Option<User>);
 
-async fn auth_user(request: &Request, _: ApiKey) -> Option<User> {
+async fn auth_user(request: &Request, _: ApiKey) -> Option<Option<User>> {
+    let token = match request_session(request)?.get::<String>("token") {
+        Some(token) => token,
+        None => return Some(None),
+    };
+
     let db = req_db_pool(request);
 
-    let token = request_session(request)?.get::<String>("token")?;
-
-    user_tokens::find_by_value(token)
+    let user = user_tokens::find_by_value(token)
         .find_also_related(models::users::Entity)
         .one(&db.conn)
         .await
         .ok()??
-        .1
+        .1;
+
+    Some(user)
 }
