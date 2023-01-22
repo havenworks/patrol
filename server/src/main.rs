@@ -7,6 +7,7 @@ use poem::{
     http::header,
     listener::TcpListener,
     middleware::CookieJarManager,
+    session::{CookieConfig, CookieSession},
     web::cookie::CookieKey,
     Endpoint, EndpointExt, Request, Response, Route,
 };
@@ -18,6 +19,7 @@ use std::{
     env,
     net::SocketAddr,
     sync::{Arc, RwLock},
+    time::Duration,
 };
 
 mod api;
@@ -37,7 +39,7 @@ pub struct FirstAdminRegistered {
     lock: Arc<RwLock<bool>>,
 }
 
-// 180 days
+// 180 days in seconds
 const MAX_AGE: u64 = 60 * 60 * 24 * 180;
 
 #[tokio::main]
@@ -98,7 +100,11 @@ async fn main() -> anyhow::Result<()> {
                 .data(db::is_first_admin_registered(&Db { conn }).await?),
         )
         .nest("/", static_files::static_routes())
-        .with(CookieJarManager::with_key(cookie_key));
+        .with(CookieSession::new(
+            CookieConfig::default()
+                .name("patrol_session")
+                .max_age(Duration::from_secs(MAX_AGE)),
+        ));
 
     // And then return 'index.html' for unmatched URLs leaving the rest
     // to client-side routing

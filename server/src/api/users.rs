@@ -15,6 +15,7 @@ use argon2::{password_hash::rand_core::OsRng, Argon2};
 use chrono::Utc;
 use log::debug;
 use poem::error::InternalServerError;
+use poem::session::Session;
 use poem::web::cookie::{Cookie, CookieJar};
 use poem::web::Data;
 use poem::Result;
@@ -191,7 +192,7 @@ impl UserApi {
     async fn login(
         &self,
         user_login: Json<UserLogin>,
-        cookies: &CookieJar,
+        session: &Session,
         db: Data<&Db>,
     ) -> Result<LoginResponse> {
         let user = users::find_by_username(user_login.username.clone())
@@ -220,26 +221,20 @@ impl UserApi {
         .await
         .map_err(InternalServerError)?;
 
-        let mut cookie = Cookie::new_with_str("_patrol_key", token);
-        cookie.set_max_age(Duration::from_secs(MAX_AGE));
-        cookie.set_path("/");
-
-        cookies.add(cookie);
+        session.set("token", token);
 
         Ok(LoginResponse::LoggedIn(Json(user)))
     }
 
     #[oai(path = "/logout", method = "delete")]
-    async fn logout(&self, cookies: &CookieJar, db: Data<&Db>) -> Result<()> {
-        if let Some(token) = cookies.get("_patrol_key") {
-            debug!("token: {:?}", token.value_str());
-            debug!("token: {:?}", token.expires());
-            user_tokens::delete_by_value(token.value_str())
+    async fn logout(&self, session: &Session, db: Data<&Db>) -> Result<()> {
+        if let Some(token) = session.get::<String>("token") {
+            user_tokens::delete_by_value(token)
                 .exec(&db.conn)
                 .await
                 .map_err(InternalServerError)?;
 
-            cookies.remove("_patrol_key");
+            session.remove("token");
 
             return Ok(());
         }

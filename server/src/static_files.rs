@@ -1,6 +1,7 @@
 use poem::{
     endpoint::{EmbeddedFileEndpoint, EmbeddedFilesEndpoint, StaticFilesEndpoint},
     http::{header, StatusCode},
+    session::Session,
     Endpoint, EndpointExt, Response, Route,
 };
 use rust_embed::RustEmbed;
@@ -17,7 +18,13 @@ pub fn static_routes() -> Route {
         .nest(
             "/",
             EmbeddedFileEndpoint::<Static>::new("index.html").around(|ep, req| async move {
-                if let Some(cookie) = req.cookie().get("_patrol_key") {
+                if req
+                    .extensions()
+                    .get::<Session>()
+                    .unwrap()
+                    .get::<String>("token")
+                    .is_some()
+                {
                     return Ok(redirect_to("/app"));
                 }
 
@@ -31,7 +38,13 @@ pub fn static_routes() -> Route {
                 .index_file("index.html")
                 .fallback_to_index()
                 .around(|ep, req| async move {
-                    if req.cookie().get("_patrol_key").is_none() {
+                    if req
+                        .extensions()
+                        .get::<Session>()
+                        .unwrap()
+                        .get::<String>("token")
+                        .is_none()
+                    {
                         return Ok(redirect_to("/"));
                     }
 

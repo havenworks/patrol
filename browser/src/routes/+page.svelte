@@ -1,5 +1,9 @@
-<h1>Welcome to SvelteKit</h1>
-<p>
-  Visit <a href="https://kit.svelte.dev">kit.svelte.dev</a>
-  to read the documentation
-</p>
+<script lang="ts">
+  import { base } from '$app/paths'
+
+  import Logout from '../lib/components/logout.svelte'
+</script>
+
+<h1>Patrol</h1>
+<Logout />
+<a href="{base}/clients">Clients</a>
