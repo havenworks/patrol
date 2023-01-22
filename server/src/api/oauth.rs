@@ -4,7 +4,7 @@ use crate::{
     api::Resources,
     models::{
         clients::{self, GrantType},
-        oauth::tokens::ACCESS_KEY_TYPE,
+        oauth::{token_requests::CodeChallengeMethod, tokens::ACCESS_KEY_TYPE},
     },
     models::{
         oauth::token_requests,
@@ -31,6 +31,7 @@ use poem_openapi::{
 use rand::distributions::{Alphanumeric, DistString};
 use sea_orm::{ActiveModelBehavior, ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use url::Url;
 use uuid::Uuid;
 
@@ -155,6 +156,7 @@ struct TokenAuthCodeParams {
     redirect_uri: String,
     client_id: Uuid,
     client_secret: String,
+    code_verifier: Option<String>,
 }
 
 async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<TokenResponse> {
@@ -193,6 +195,36 @@ async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<Token
         .await
         .map_err(InternalServerError)?
         .ok_or(TokenResponse::InvalidGrant)?;
+
+    match (token_request.code_challenge, params.code_verifier) {
+        (Some(code_challenge), Some(code_verifier)) => {
+            let code_challenge_method = CodeChallengeMethod::from_str(
+                token_request
+                    .code_challenge_method
+                    .unwrap_or("plain".to_string())
+                    .as_str(),
+            )
+            .map_err(|_| TokenResponse::InvalidRequest)?;
+
+            let challenge_successful = match code_challenge_method {
+                CodeChallengeMethod::Plain => code_challenge == code_verifier,
+                CodeChallengeMethod::S256 => {
+                    let mut hasher = Sha256::new();
+                    hasher.update(code_verifier.as_bytes());
+                    let hashed_code_verifier = hasher.finalize();
+
+                    let encoded_code_verifier = base64_url::encode(hashed_code_verifier.as_slice());
+
+                    code_challenge == encoded_code_verifier
+                }
+            };
+
+            if !challenge_successful {
+                return Ok(TokenResponse::InvalidGrant);
+            }
+        }
+        _ => return Ok(TokenResponse::InvalidRequest),
+    }
 
     let authorize_redirect_uri =
         Url::parse(&token_request.redirect_uri).map_err(InternalServerError)?;

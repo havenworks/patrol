@@ -38,6 +38,8 @@ CREATE TABLE public.clients (
 CREATE TABLE public.oauth_token_requests (
     code text NOT NULL,
     redirect_uri text NOT NULL,
+    code_challenge text,
+    code_challenge_method text,
     user_id uuid,
     client_id uuid,
     created_at timestamp with time zone NOT NULL

@@ -1,5 +1,8 @@
+use std::str::FromStr;
+
 use crate::models;
 use chrono::Utc;
+use poem_openapi::Enum;
 use sea_orm::{entity::prelude::*, Set};
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +12,9 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false, unique)]
     pub code: String,
     pub redirect_uri: String,
+
+    pub code_challenge: Option<String>,
+    pub code_challenge_method: Option<String>,
 
     pub created_at: DateTimeUtc,
 
@@ -40,6 +46,25 @@ impl ActiveModelBehavior for ActiveModel {
             created_at: Set(now),
 
             ..ActiveModelTrait::default()
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Enum)]
+#[oai(rename_all = "snake_case")]
+pub enum CodeChallengeMethod {
+    Plain,
+    S256,
+}
+
+impl FromStr for CodeChallengeMethod {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "plain" => Ok(CodeChallengeMethod::Plain),
+            "S256" => Ok(CodeChallengeMethod::S256),
+            _ => Err(()),
         }
     }
 }

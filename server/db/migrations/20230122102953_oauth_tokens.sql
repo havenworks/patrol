@@ -21,6 +21,9 @@ CREATE TABLE oauth_token_requests (
   code TEXT PRIMARY KEY,
   redirect_uri TEXT NOT NULL,
 
+  code_challenge TEXT,
+  code_challenge_method TEXT,
+
   user_id UUID REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE,
   client_id UUID REFERENCES clients (id) ON UPDATE CASCADE ON DELETE CASCADE,
 
@@ -44,5 +47,8 @@ CREATE TABLE oauth_tokens (
 CREATE UNIQUE INDEX tokens_refresh_key ON oauth_tokens (refresh_key);
 
 -- migrate:down
+DROP INDEX IF EXISTS tokens_refresh_key;
 DROP TABLE IF EXISTS oauth_token_requests;
 DROP TABLE IF EXISTS oauth_tokens;
+DROP INDEX IF EXISTS clients_secret;
+DROP TABLE IF EXISTS clients;
