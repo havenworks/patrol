@@ -1,10 +1,11 @@
-use poem::{error::InternalServerError, Request};
+use poem::{error::InternalServerError, session::Session, Request};
 use poem_openapi::{auth::ApiKey, SecurityScheme, Tags};
 use sea_orm::{ColumnTrait, EntityTrait, ModelTrait, QueryFilter};
 
-use crate::{models::user_tokens, Db};
-
-use super::models::{self, users::Model as User};
+use crate::{
+    models::{self, user_tokens, users::Model as User},
+    Db,
+};
 
 mod clients;
 pub mod crypto;
@@ -39,49 +40,41 @@ fn req_db_pool(req: &Request) -> &Db {
         .expect("Could not extract the db pool from the request")
 }
 
-#[derive(SecurityScheme)]
-#[oai(
-    type = "api_key",
-    in = "cookie",
-    key_name = "_patrol_key",
-    checker = "auth_user"
-)]
-struct AuthUser(User);
-
-async fn auth_user(req: &Request, session_id: ApiKey) -> Option<User> {
-    let db = req_db_pool(req);
-
-    user_tokens::Entity::find_by_id(session_id.key)
-        .filter(user_tokens::Column::Valid.eq(true))
-        .one(&db.conn)
-        .await
-        .ok()
-        .flatten()?
-        // If a token is found, fetch the user
-        .find_related(models::users::Entity)
-        .one(&db.conn)
-        .await
-        .ok()
-        .flatten()
+fn request_session(request: &Request) -> Option<&Session> {
+    request.extensions().get::<Session>()
 }
 
 #[derive(SecurityScheme)]
 #[oai(
     type = "api_key",
     in = "cookie",
-    key_name = "_patrol_key",
-    checker = "auth_admin"
+    key_name = "patrol_session",
+    checker = "auth_logged_in"
 )]
-struct AuthAdmin(User);
+pub struct AuthLoggedIn(());
 
-async fn auth_admin(req: &Request, session_id: ApiKey) -> Option<User> {
-    let user = auth_user(req, session_id).await?;
+async fn auth_logged_in(request: &Request, _: ApiKey) -> Option<()> {
+    request_session(request)?.get::<String>("token").map(|_| ())
+}
 
-    let db = req_db_pool(req);
+#[derive(SecurityScheme)]
+#[oai(
+    type = "api_key",
+    in = "cookie",
+    key_name = "patrol_session",
+    checker = "auth_user"
+)]
+pub struct AuthUser(User);
 
-    models::users_roles::Entity::find_by_id((user.id, "admin".to_string()))
+async fn auth_user(request: &Request, _: ApiKey) -> Option<User> {
+    let db = req_db_pool(request);
+
+    let token = request_session(request)?.get::<String>("token")?;
+
+    user_tokens::find_by_value(token)
+        .find_also_related(models::users::Entity)
         .one(&db.conn)
         .await
-        .ok()?
-        .map(|_| user)
+        .ok()??
+        .1
 }

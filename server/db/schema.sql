@@ -20,6 +20,55 @@ SET default_table_access_method = heap;
 CREATE TABLE public.clients (
     id uuid NOT NULL,
     name text NOT NULL,
+    homepage_uri text,
+    logo bytea NOT NULL,
+    logo_uri text NOT NULL,
+    secret text NOT NULL,
+    redirect_uris text[] NOT NULL,
+    grant_types text[] NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: oauth_token_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.oauth_token_requests (
+    code text NOT NULL,
+    redirect_uri text NOT NULL,
+    code_challenge text,
+    code_challenge_method text,
+    user_id uuid,
+    client_id uuid,
+    created_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: oauth_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.oauth_tokens (
+    access_key text NOT NULL,
+    access_key_expires_at timestamp with time zone NOT NULL,
+    refresh_key text NOT NULL,
+    refresh_key_expires_at timestamp with time zone NOT NULL,
+    user_id uuid,
+    client_id uuid,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: clients; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.clients (
+    id uuid NOT NULL,
+    name text NOT NULL,
     homepage_url text,
     logo bytea NOT NULL,
     logo_uri text NOT NULL,
