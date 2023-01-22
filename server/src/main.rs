@@ -1,4 +1,3 @@
-
 use console::{style, Emoji};
 use dotenv::dotenv;
 use log::info;

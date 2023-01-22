@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use chrono::Utc;
 use poem_openapi::{Enum, Object};
 use sea_orm::{entity::prelude::*, Set};
@@ -52,20 +54,34 @@ pub fn find_by_id(id: Uuid) -> Select<Entity> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Enum)]
 #[oai(rename_all = "snake_case")]
 pub enum GrantType {
-    AuthCode,
+    AuthorizationCode,
     Password,
-    ClientCreds,
+    ClientCredentials,
     Implicit,
 }
 
 impl ToString for GrantType {
     fn to_string(&self) -> String {
         match self {
-            GrantType::AuthCode => "authorization_code",
-            GrantType::Password => todo!(),
-            GrantType::ClientCreds => todo!(),
-            GrantType::Implicit => todo!(),
+            GrantType::AuthorizationCode => "authorization_code",
+            GrantType::Password => "password",
+            GrantType::ClientCredentials => "client_credentials",
+            GrantType::Implicit => "implicit",
         }
         .to_string()
+    }
+}
+
+impl FromStr for GrantType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "authorization_code" => Ok(GrantType::AuthorizationCode),
+            "password" => Ok(GrantType::Password),
+            "client_credentials" => Ok(GrantType::ClientCredentials),
+            "implicit" => Ok(GrantType::Implicit),
+            _ => Err(()),
+        }
     }
 }
