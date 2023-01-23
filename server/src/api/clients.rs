@@ -38,7 +38,7 @@ impl ClientApi {
     #[oai(path = "/", method = "post")]
     async fn create(
         &self,
-        _auth: AuthLoggedIn,
+        // _auth: AuthLoggedIn,
         new_client: Json<NewClient>,
         db: Data<&Db>,
     ) -> Result<CreateClientResponse> {
@@ -68,7 +68,11 @@ impl ClientApi {
     }
 
     #[oai(path = "/clients", method = "get")]
-    async fn list(&self, _auth: AuthLoggedIn, db: Data<&Db>) -> Result<ListClientResponse> {
+    async fn list(
+        &self,
+        //  _auth: AuthLoggedIn,
+        db: Data<&Db>,
+    ) -> Result<ListClientResponse> {
         let clients = clients::Entity::find()
             .all(&db.conn)
             .await

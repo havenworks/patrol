@@ -38,7 +38,7 @@ use super::{crypto::hashing, users::verify_password, OptionalAuthUser};
 
 pub struct OauthApi;
 
-#[derive(Copy, Clone, Enum, Deserialize, PartialEq)]
+#[derive(Copy, Clone, Enum, Deserialize, PartialEq, Debug)]
 #[oai(rename_all = "snake_case")]
 enum ResponseType {
     Code,
@@ -167,7 +167,7 @@ impl OauthApi {
 
         if *response_type == ResponseType::Token {
             let (access_token, access_token_expires_at) =
-                generate_access_token_jwt(&client.id, &user.id.to_string(), scope.clone())?;
+                generate_access_token_jwt(&client.id, &user.id.to_string(), scope.deref().clone())?;
 
             tokens::ActiveModel {
                 access_key: Set(access_token.clone()),
@@ -185,16 +185,22 @@ impl OauthApi {
             .await
             .map_err(InternalServerError)?;
 
-            let response = ImplicitGrantResponse {
-                access_token,
-                expires_in: ACCESS_KEY_EXPIRY.to_string(),
-                token_type: ACCESS_KEY_TYPE.to_string(),
-                scope: scope.clone(),
-                state: state.clone(),
-            };
+            redirect_uri
+                .query_pairs_mut()
+                .append_pair("access_token", access_token.as_str())
+                .append_pair("expires_in", &ACCESS_KEY_EXPIRY.to_string())
+                .append_pair("token_type", ACCESS_KEY_TYPE);
 
-            return Ok(Response::new(AuthorizeResponse::Token(Json(response)))
-                .header("cache-control", "no-store, no-cache"));
+            if let Some(scope) = scope.deref() {
+                redirect_uri.query_pairs_mut().append_pair("scope", scope);
+            }
+
+            if let Some(state) = state.deref() {
+                redirect_uri.query_pairs_mut().append_pair("state", state);
+            }
+
+            return Ok(Response::new(AuthorizeResponse::Redirect)
+                .header(header::LOCATION, redirect_uri.to_string()));
         }
 
         let code_challenge_method = CodeChallengeMethod::from_str(
@@ -499,9 +505,11 @@ fn generate_access_token_jwt(
     sub: &String,
     scope: Option<String>,
 ) -> Result<(String, DateTime<Utc>)> {
-    let mut header = Header::new(Algorithm::RS256);
-
-    header.typ = Some("at+JWT".to_string());
+    let header = Header {
+        alg: Algorithm::HS512,
+        typ: Some("at+jwt".to_string()),
+        ..Default::default()
+    };
 
     let now = Utc::now();
     let expires_at = now + Duration::seconds(ACCESS_KEY_EXPIRY);
@@ -510,7 +518,7 @@ fn generate_access_token_jwt(
         // ! Figure out how to differentiate between instances.
         iss: "patrol".to_string(),
         aud: client_id.to_string(),
-        sub: sub.clone(),
+        sub: sub.to_string(),
         client_id: client_id.to_string(),
         scope,
         jti: Alphanumeric.sample_string(&mut rand::thread_rng(), 32),
@@ -520,6 +528,7 @@ fn generate_access_token_jwt(
 
     let token = encode(
         &header,
+        // &Header::default(),
         &claims,
         // ! Add the secret
         &EncodingKey::from_secret("very_secret_secret".as_bytes()),
