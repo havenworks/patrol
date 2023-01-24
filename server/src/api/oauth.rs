@@ -3,12 +3,13 @@ use std::{ops::Deref, str::FromStr};
 use crate::{
     api::{auth_user, request_session, try_me_bitch, Resources},
     models::{
+        self,
         clients::{self, GrantType},
         oauth::{
             token_requests::{self, CodeChallengeMethod},
             tokens::{self, ACCESS_KEY_EXPIRY, ACCESS_KEY_TYPE, REFRESH_KEY_EXPIRY},
         },
-        users,
+        user_tokens, users,
     },
     Db,
 };
@@ -123,6 +124,20 @@ impl OauthApi {
 
         // ! Used for development until @michaljanocko fixes the SecurityScheme bullshit.
         let user: Option<users::Model> = try_me_bitch(request, &db).await;
+
+        let token = request_session(request).and_then(|session| session.get::<String>("token"));
+
+        let user = match token {
+            Some(token) => user_tokens::find_by_value(token)
+                .find_also_related(models::users::Entity)
+                .one(&db.conn)
+                .await
+                .ok()
+                .flatten()
+                .map(|user_token| user_token.1),
+            None => None,
+        }
+        .flatten();
 
         // Parse the redirect URI and check if it matches any of the URIs
         // registered for the client
@@ -528,9 +543,8 @@ fn generate_access_token_jwt(
 
     let token = encode(
         &header,
-        // &Header::default(),
         &claims,
-        // ! Add the secret
+        // TODO: Add the secret
         &EncodingKey::from_secret("very_secret_secret".as_bytes()),
     )
     .map_err(InternalServerError)?;
