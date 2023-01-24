@@ -35,9 +35,10 @@ pub enum ListClientResponse {
 
 #[OpenApi(prefix_path = "/api/clients", tag = "Resources::Clients")]
 impl ClientApi {
+    #[oai(path = "/", method = "post")]
     async fn create(
         &self,
-        _: AuthLoggedIn,
+        _token: AuthLoggedIn,
         new_client: Json<NewClient>,
         db: Data<&Db>,
     ) -> Result<CreateClientResponse> {
@@ -66,7 +67,7 @@ impl ClientApi {
     }
 
     #[oai(path = "/clients", method = "get")]
-    async fn list(&self, _auth: AuthLoggedIn, db: Data<&Db>) -> Result<ListClientResponse> {
+    async fn list(&self, _token: AuthLoggedIn, db: Data<&Db>) -> Result<ListClientResponse> {
         let clients = clients::Entity::find()
             .all(&db.conn)
             .await

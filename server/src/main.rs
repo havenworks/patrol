@@ -2,18 +2,12 @@ use console::{style, Emoji};
 use dotenv::dotenv;
 use log::info;
 use poem::{
-    endpoint::{EmbeddedFilesEndpoint, StaticFilesEndpoint},
-    error::NotFoundError,
-    http::header,
     listener::TcpListener,
-    middleware::CookieJarManager,
     session::{CookieConfig, CookieSession},
     web::cookie::CookieKey,
-    Endpoint, EndpointExt, Request, Response, Route,
+    EndpointExt, Route,
 };
 use poem_openapi::OpenApiService;
-use reqwest::StatusCode;
-use rust_embed::RustEmbed;
 use sea_orm::DatabaseConnection;
 use std::{
     env,
@@ -64,19 +58,18 @@ async fn main() -> anyhow::Result<()> {
 
     pretty_env_logger::init();
 
-    // let index_html = Static::get("index.html")
-    //     .unwrap_or_else(|| panic!("Could not find {} in `static`", style("index.html").red()))
-    //     .data
-    //     .to_vec();
-
     // Database
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL is not set in the `.env` file");
     let conn = sea_orm::Database::connect(db_url)
         .await
         .expect("Could not connect to the database");
 
-    info!("{} Running database migrations", Emoji("🗃 ", ""));
-    db::run_migrations().await?;
+    if cfg!(debug_assertions) {
+        info!("{}Skipping migrations in development", Emoji("🏃 ", ""));
+    } else {
+        info!("{}Running database migrations", Emoji("🗃  ", ""));
+        db::run_migrations().await?;
+    }
 
     // Cookies
     let cookie_secret =
@@ -90,36 +83,24 @@ async fn main() -> anyhow::Result<()> {
 
     let ui = service.swagger_ui();
     let spec = service.spec_endpoint();
+    let api = service
+        .data(Db { conn: conn.clone() })
+        .data(db::is_first_admin_registered(&Db { conn }).await?);
+
     let app = Route::new()
         .nest("/api/swagger", ui)
         .nest("/api/openapi.json", spec)
-        .nest_no_strip(
-            "/api",
-            service
-                .data(Db { conn: conn.clone() })
-                .data(db::is_first_admin_registered(&Db { conn }).await?),
-        )
+        .nest_no_strip("/<(api|oauth)>", api)
         .nest("/", static_files::static_routes())
         .with(CookieSession::new(
-            CookieConfig::default()
+            CookieConfig::private(cookie_key)
                 .name("patrol_session")
                 .max_age(Duration::from_secs(MAX_AGE)),
         ));
 
-    // And then return 'index.html' for unmatched URLs leaving the rest
-    // to client-side routing
-    // .catch_error(move |_: NotFoundError| {
-    //     let index_html_file = index_html.clone();
-    //     async move {
-    //         Response::builder()
-    //             .status(StatusCode::OK)
-    //             .body(index_html_file)
-    //     }
-    // });
-
     info!(
-        "{} Listening on port {}",
-        Emoji("🚀", ""),
+        "{}Listening on port {}",
+        Emoji("🚀 ", ""),
         style("8000").bold()
     );
     poem::Server::new(TcpListener::bind(&SocketAddr::from(([127, 0, 0, 1], 8000))))

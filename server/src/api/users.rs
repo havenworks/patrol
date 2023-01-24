@@ -26,6 +26,12 @@ use uuid::Uuid;
 
 pub struct UserApi;
 
+impl UserApi {
+    pub const fn root() -> &'static str {
+        "/api/users"
+    }
+}
+
 #[derive(Object)]
 struct NewUser {
     #[oai(validator(max_length = 64))]
