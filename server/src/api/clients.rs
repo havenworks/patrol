@@ -3,9 +3,14 @@ use crate::{models::clients, Db};
 use super::{crypto, AuthLoggedIn, Resources};
 use argon2::password_hash::SaltString;
 use poem::{error::InternalServerError, web::Data, Result};
-use poem_openapi::{payload::Json, ApiResponse, Object, OpenApi};
+use poem_openapi::{param::Path, payload::Json, ApiResponse, Object, OpenApi};
+use rand::{
+    distributions::{Alphanumeric, DistString},
+    Rng,
+};
 use rsa::rand_core::OsRng;
 use sea_orm::{ActiveModelBehavior, ActiveModelTrait, EntityTrait, Set};
+use uuid::Uuid;
 
 pub struct ClientApi;
 
@@ -16,7 +21,6 @@ pub struct NewClient {
     logo: Vec<u8>,
     logo_uri: String,
 
-    secret: String,
     redirect_uris: Vec<String>,
     grant_types: Vec<String>,
 }
@@ -24,13 +28,27 @@ pub struct NewClient {
 #[derive(ApiResponse)]
 pub enum CreateClientResponse {
     #[oai(status = 201)]
-    Created(Json<clients::Model>),
+    Created(Json<ClientCreatedResponse>),
+}
+
+#[derive(Object)]
+pub struct ClientCreatedResponse {
+    client: clients::Model,
+    secret: String,
 }
 
 #[derive(ApiResponse)]
 pub enum ListClientResponse {
     #[oai(status = 200)]
     Ok(Json<Vec<clients::Model>>),
+}
+
+#[derive(ApiResponse)]
+pub enum DeleteClientResponse {
+    #[oai(status = 204)]
+    Deleted,
+    #[oai(status = 404)]
+    NotFound,
 }
 
 #[OpenApi(prefix_path = "/api/clients", tag = "Resources::Clients")]
@@ -42,9 +60,9 @@ impl ClientApi {
         new_client: Json<NewClient>,
         db: Data<&Db>,
     ) -> Result<CreateClientResponse> {
+        let secret = generate_secret();
         let salt = SaltString::generate(&mut OsRng);
-        let secret_hash =
-            crypto::hashing::hash(&salt.as_salt(), new_client.secret.as_bytes())?.to_string();
+        let secret_hash = crypto::hashing::hash(&salt.as_salt(), secret.as_bytes())?.to_string();
 
         // Create the client in the database
         let client = clients::ActiveModel {
@@ -63,7 +81,10 @@ impl ClientApi {
         .await
         .map_err(InternalServerError)?;
 
-        Ok(CreateClientResponse::Created(Json(client)))
+        Ok(CreateClientResponse::Created(Json(ClientCreatedResponse {
+            client,
+            secret,
+        })))
     }
 
     #[oai(path = "/clients", method = "get")]
@@ -75,4 +96,28 @@ impl ClientApi {
 
         Ok(ListClientResponse::Ok(Json(clients)))
     }
+
+    #[oai(path = "/clients/{id}", method = "delete")]
+    async fn delete(
+        &self,
+        _token: AuthLoggedIn,
+        client_id: Path<Uuid>,
+        db: Data<&Db>,
+    ) -> Result<DeleteClientResponse> {
+        if clients::delete_by_id(*client_id)
+            .exec(&db.conn)
+            .await
+            .map_err(InternalServerError)?
+            .rows_affected
+            > 0
+        {
+            Ok(DeleteClientResponse::Deleted)
+        } else {
+            Ok(DeleteClientResponse::NotFound)
+        }
+    }
+}
+
+fn generate_secret() -> String {
+    Alphanumeric.sample_string(&mut rand::thread_rng(), 64)
 }

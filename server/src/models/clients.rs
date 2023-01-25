@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use chrono::Utc;
 use poem_openapi::{Enum, Object};
-use sea_orm::{entity::prelude::*, Set};
+use sea_orm::{entity::prelude::*, Delete, DeleteMany, Set};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -47,6 +47,10 @@ impl ActiveModelBehavior for ActiveModel {
 
 pub fn find_by_id(id: Uuid) -> Select<Entity> {
     Entity::find_by_id(id)
+}
+
+pub fn delete_by_id(id: Uuid) -> DeleteMany<Entity> {
+    Entity::delete_by_id(id)
 }
 
 // Grant types
