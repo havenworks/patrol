@@ -120,13 +120,9 @@ impl OauthApi {
         request: &Request,
         db: Data<&Db>,
     ) -> Result<Response<AuthorizeResponse>> {
-        // localhost:8000/oauth/authorize?response_type=code&client_id=dbe3cb01-6b60-4a19-a60c-5629a48d9ec5&redirect_uri=http://localhost:1234/oauth/callback&code_challenge=ahojda
-
-        // ! Used for development until @michaljanocko fixes the SecurityScheme bullshit.
-        let user: Option<users::Model> = try_me_bitch(request, &db).await;
-
         let token = request_session(request).and_then(|session| session.get::<String>("token"));
 
+        // ! Used for development until @michaljanocko fixes the SecurityScheme bullshit.
         let user = match token {
             Some(token) => user_tokens::find_by_value(token)
                 .find_also_related(models::users::Entity)
@@ -544,8 +540,8 @@ fn generate_access_token_jwt(
     let token = encode(
         &header,
         &claims,
-        // TODO: Add the secret
-        &EncodingKey::from_secret("very_secret_secret".as_bytes()),
+        // TODO: Handle unwrap
+        &EncodingKey::from_secret(std::env::var("COOKIE_SECRET").unwrap().as_bytes()),
     )
     .map_err(InternalServerError)?;
 
