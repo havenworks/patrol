@@ -15,11 +15,11 @@ pub struct Model {
     pub access_key_expires_at: DateTimeUtc,
 
     #[sea_orm(unique)]
-    pub refresh_key: String,
-    pub refresh_key_expires_at: DateTimeUtc,
+    pub refresh_key: Option<String>,
+    pub refresh_key_expires_at: Option<DateTimeUtc>,
 
     pub client_id: Uuid,
-    pub user_id: Uuid,
+    pub user_id: Option<Uuid>,
 
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,

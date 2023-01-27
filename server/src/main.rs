@@ -2,8 +2,14 @@ use console::{style, Emoji};
 use dotenv::dotenv;
 use log::info;
 use poem::{
-    endpoint::EmbeddedFilesEndpoint, error::NotFoundError, listener::TcpListener,
-    middleware::CookieJarManager, web::cookie::CookieKey, EndpointExt, Response, Route,
+    endpoint::{EmbeddedFilesEndpoint, StaticFilesEndpoint},
+    error::NotFoundError,
+    http::header,
+    listener::TcpListener,
+    middleware::CookieJarManager,
+    session::{CookieConfig, CookieSession},
+    web::cookie::CookieKey,
+    Endpoint, EndpointExt, Request, Response, Route,
 };
 use poem_openapi::OpenApiService;
 use reqwest::StatusCode;
@@ -13,12 +19,14 @@ use std::{
     env,
     net::SocketAddr,
     sync::{Arc, RwLock},
+    time::Duration,
 };
 
 mod api;
 mod db;
 // mod keys;
 mod models;
+mod static_files;
 // mod util;
 
 #[derive(Clone)]
@@ -31,13 +39,8 @@ pub struct FirstAdminRegistered {
     lock: Arc<RwLock<bool>>,
 }
 
-// 180 days
+// 180 days in seconds
 const MAX_AGE: u64 = 60 * 60 * 24 * 180;
-
-#[derive(RustEmbed)]
-#[folder = "static"]
-#[exclude = "node_modules/*"]
-pub struct Static;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -61,10 +64,10 @@ async fn main() -> anyhow::Result<()> {
 
     pretty_env_logger::init();
 
-    let index_html = Static::get("index.html")
-        .unwrap_or_else(|| panic!("Could not find {} in `static`", style("index.html").red()))
-        .data
-        .to_vec();
+    // let index_html = Static::get("index.html")
+    //     .unwrap_or_else(|| panic!("Could not find {} in `static`", style("index.html").red()))
+    //     .data
+    //     .to_vec();
 
     // Database
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL is not set in the `.env` file");
@@ -90,25 +93,28 @@ async fn main() -> anyhow::Result<()> {
     let app = Route::new()
         .nest("/api/swagger", ui)
         .nest("/api/openapi.json", spec)
-        .nest(
-            "/",
-            service
-                .data(Db { conn: conn.clone() })
-                .data(db::is_first_admin_registered(&Db { conn }).await?)
-                .with(CookieJarManager::with_key(cookie_key)),
+        .nest_no_strip(
+            "/<(api|oauth)>",
+            service.data(db::is_first_admin_registered(&Db { conn: conn.clone() }).await?),
         )
-        // Static assets
-        .nest("/static", EmbeddedFilesEndpoint::<Static>::new())
-        // And then return 'index.html' for unmatched URLs leaving the rest
-        // to client-side routing
-        .catch_error(move |_: NotFoundError| {
-            let index_html_file = index_html.clone();
-            async move {
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .body(index_html_file)
-            }
-        });
+        .nest("/", static_files::static_routes())
+        .data(Db { conn: conn.clone() })
+        .with(CookieSession::new(
+            CookieConfig::default()
+                .name("patrol_session")
+                .max_age(Duration::from_secs(MAX_AGE)),
+        ));
+
+    // And then return 'index.html' for unmatched URLs leaving the rest
+    // to client-side routing
+    // .catch_error(move |_: NotFoundError| {
+    //     let index_html_file = index_html.clone();
+    //     async move {
+    //         Response::builder()
+    //             .status(StatusCode::OK)
+    //             .body(index_html_file)
+    //     }
+    // });
 
     info!(
         "{} Listening on port {}",

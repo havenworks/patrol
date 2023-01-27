@@ -1,5 +1,5 @@
 use crate::models;
-use sea_orm::{entity::prelude::*, Set};
+use sea_orm::{entity::prelude::*, DeleteMany, Set};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
@@ -36,4 +36,12 @@ impl ActiveModelBehavior for ActiveModel {
             ..ActiveModelTrait::default()
         }
     }
+}
+
+pub fn find_by_value<S: Into<String>>(value: S) -> Select<Entity> {
+    Entity::find_by_id(value.into())
+}
+
+pub fn delete_by_value<S: Into<String>>(value: S) -> DeleteMany<Entity> {
+    Entity::delete_by_id(value.into())
 }

@@ -1,26 +1,24 @@
+use std::ops::Deref;
 use std::time::Duration;
 
 use crate::models::{user_tokens, users_roles};
 use crate::{models::users, FirstAdminRegistered};
 use crate::{Db, MAX_AGE};
 
-use super::crypto;
 use super::error::ApiError;
-use super::{AuthAdmin, AuthUser, Resources};
+use super::Resources;
+use super::{crypto, AuthUser};
 
 use anyhow::anyhow;
 use argon2::password_hash::SaltString;
 use argon2::PasswordVerifier;
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher},
-    Argon2,
-};
+use argon2::{password_hash::rand_core::OsRng, Argon2};
 use chrono::Utc;
 use poem::error::InternalServerError;
-use poem::web::cookie::{Cookie, CookieJar};
+use poem::session::Session;
 use poem::web::Data;
 use poem::Result;
-use poem_openapi::param::Path;
+use poem_openapi::param::Query;
 use poem_openapi::{payload::Json, ApiResponse, Enum, Object, OpenApi};
 use rand::RngCore;
 use sea_orm::prelude::DateTimeUtc;
@@ -109,7 +107,7 @@ impl UserApi {
     #[oai(path = "/", method = "post")]
     async fn create(
         &self,
-        _admin: AuthAdmin,
+        _user: AuthUser,
         new_user: Json<NewUser>,
         is_first_admin_registered: Data<&FirstAdminRegistered>,
         db: Data<&Db>,
@@ -194,7 +192,7 @@ impl UserApi {
     async fn login(
         &self,
         user_login: Json<UserLogin>,
-        cookies: &CookieJar,
+        session: &Session,
         db: Data<&Db>,
     ) -> Result<LoginResponse> {
         let user = users::find_by_username(user_login.username.clone())
@@ -223,12 +221,25 @@ impl UserApi {
         .await
         .map_err(InternalServerError)?;
 
-        let mut cookie = Cookie::new_with_str("_patrol_key", token);
-        cookie.set_max_age(Duration::from_secs(MAX_AGE));
-
-        cookies.add(cookie);
+        session.set("token", token);
 
         Ok(LoginResponse::LoggedIn(Json(user)))
+    }
+
+    #[oai(path = "/logout", method = "delete")]
+    async fn logout(&self, session: &Session, db: Data<&Db>) -> Result<()> {
+        if let Some(token) = session.get::<String>("token") {
+            user_tokens::delete_by_value(token)
+                .exec(&db.conn)
+                .await
+                .map_err(InternalServerError)?;
+
+            session.remove("token");
+
+            return Ok(());
+        }
+
+        Err(anyhow!("Failed to logout").into())
     }
 }
 
