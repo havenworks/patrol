@@ -83,16 +83,14 @@ async fn main() -> anyhow::Result<()> {
 
     let ui = service.swagger_ui();
     let spec = service.spec_endpoint();
-    let api = service
-        .data(Db { conn: conn.clone() })
-        .data(db::is_first_admin_registered(&Db { conn }).await?);
+    let api = service.data(db::is_first_admin_registered(&Db { conn: conn.clone() }).await?);
 
     let app = Route::new()
         .nest("/api/swagger", ui)
         .nest("/api/openapi.json", spec)
         .nest_no_strip("/<(api|oauth)>", api)
         .nest("/", static_files::static_routes())
-        .data(Db { conn: conn.clone() })
+        .data(Db { conn })
         .with(CookieSession::new(
             CookieConfig::private(cookie_key)
                 .name("patrol_session")

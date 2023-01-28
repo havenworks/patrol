@@ -1,38 +1,24 @@
-use std::ops::Deref;
-use std::time::Duration;
-
 use crate::models::{user_tokens, users_roles};
+use crate::Db;
 use crate::{models::users, FirstAdminRegistered};
-use crate::{Db, MAX_AGE};
 
 use super::error::ApiError;
 use super::Resources;
 use super::{crypto, AuthUser};
 
 use anyhow::anyhow;
-use argon2::password_hash::SaltString;
-use argon2::PasswordVerifier;
-use argon2::{password_hash::rand_core::OsRng, Argon2};
+use argon2::{
+    password_hash::rand_core::OsRng, password_hash::SaltString, Argon2, PasswordVerifier,
+};
 use chrono::Utc;
-use poem::error::InternalServerError;
-use poem::session::Session;
-use poem::web::Data;
-use poem::Result;
-use poem_openapi::param::Query;
+use poem::{error::InternalServerError, session::Session, web::Data, Result};
 use poem_openapi::{payload::Json, ApiResponse, Enum, Object, OpenApi};
 use rand::RngCore;
-use sea_orm::prelude::DateTimeUtc;
-use sea_orm::{ActiveModelBehavior, ActiveModelTrait, Set, TransactionTrait};
+use sea_orm::{prelude::DateTimeUtc, ActiveModelBehavior, ActiveModelTrait, Set, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub struct UserApi;
-
-impl UserApi {
-    pub const fn root() -> &'static str {
-        "/api/users"
-    }
-}
 
 #[derive(Object)]
 struct NewUser {

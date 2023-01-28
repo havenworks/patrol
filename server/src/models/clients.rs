@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use chrono::Utc;
 use poem_openapi::{Enum, Object};
-use sea_orm::{entity::prelude::*, Delete, DeleteMany, Set};
+use sea_orm::{entity::prelude::*, DeleteMany, Set};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

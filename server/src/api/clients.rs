@@ -4,10 +4,7 @@ use super::{crypto, AuthLoggedIn, Resources};
 use argon2::password_hash::SaltString;
 use poem::{error::InternalServerError, web::Data, Result};
 use poem_openapi::{param::Path, payload::Json, ApiResponse, Object, OpenApi};
-use rand::{
-    distributions::{Alphanumeric, DistString},
-    Rng,
-};
+use rand::distributions::{Alphanumeric, DistString};
 use rsa::rand_core::OsRng;
 use sea_orm::{ActiveModelBehavior, ActiveModelTrait, EntityTrait, Set};
 use uuid::Uuid;

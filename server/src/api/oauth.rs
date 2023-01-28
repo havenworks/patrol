@@ -1,7 +1,7 @@
 use std::{ops::Deref, str::FromStr};
 
 use crate::{
-    api::{auth_user, request_session, try_me_bitch, Resources},
+    api::{request_session, Resources},
     models::{
         self,
         clients::{self, GrantType},
@@ -19,11 +19,10 @@ use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use poem::{
     error::{InternalServerError, Result},
     http::header,
-    web::{self, Data, Path},
+    web::{self, Data},
     FromRequest, Request,
 };
 use poem_openapi::{
-    auth::ApiKey,
     param::Query,
     payload::{Json, Response},
     ApiResponse, Enum, Object, OpenApi,
@@ -35,7 +34,7 @@ use sha2::{Digest, Sha256};
 use url::Url;
 use uuid::Uuid;
 
-use super::{crypto::hashing, users::verify_password, OptionalAuthUser};
+use super::{crypto::hashing, users::verify_password};
 
 pub struct OauthApi;
 
