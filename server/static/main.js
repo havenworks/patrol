@@ -22,7 +22,7 @@ form.onsubmit = async (event) => {
 
   if (res.ok) {
     const params = new Proxy(new URLSearchParams(window.location.search), {
-      get: (searchParams, prop) => searchParams.get(prop),
+      get: (searchParams, prop) => searchParams.get(prop)
     })
 
     if (params.return_to) {
