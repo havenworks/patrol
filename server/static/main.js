@@ -21,6 +21,16 @@ form.onsubmit = async (event) => {
   })
 
   if (res.ok) {
+    const params = new Proxy(new URLSearchParams(window.location.search), {
+      get: (searchParams, prop) => searchParams.get(prop)
+    })
+
+    if (params.return_to) {
+      location.replace(params.return_to)
+
+      return
+    }
+
     location.replace('/app')
   }
 }

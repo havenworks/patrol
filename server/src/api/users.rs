@@ -1,12 +1,13 @@
+use std::ops::Deref;
 use std::time::Duration;
 
 use crate::models::{user_tokens, users_roles};
 use crate::{models::users, FirstAdminRegistered};
 use crate::{Db, MAX_AGE};
 
-use super::crypto;
 use super::error::ApiError;
-use super::{AuthUser, Resources};
+use super::Resources;
+use super::{crypto, AuthUser};
 
 use anyhow::anyhow;
 use argon2::password_hash::SaltString;
@@ -17,6 +18,7 @@ use poem::error::InternalServerError;
 use poem::session::Session;
 use poem::web::Data;
 use poem::Result;
+use poem_openapi::param::Query;
 use poem_openapi::{payload::Json, ApiResponse, Enum, Object, OpenApi};
 use rand::RngCore;
 use sea_orm::prelude::DateTimeUtc;

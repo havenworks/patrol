@@ -77,3 +77,16 @@ async fn auth_user(request: &Request, api_key: ApiKey) -> Option<User> {
         .ok()??
         .1
 }
+
+#[derive(SecurityScheme)]
+#[oai(
+    type = "api_key",
+    in = "cookie",
+    key_name = "patrol_session",
+    checker = "optional_auth_user"
+)]
+pub struct OptionalAuthUser(Option<User>);
+
+async fn optional_auth_user(request: &Request, api_key: ApiKey) -> Option<Option<User>> {
+    Some(auth_user(request, api_key).await)
+}

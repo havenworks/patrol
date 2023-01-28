@@ -1,14 +1,15 @@
 use std::{ops::Deref, str::FromStr};
 
 use crate::{
-    api::Resources,
+    api::{auth_user, request_session, try_me_bitch, Resources},
     models::{
+        self,
         clients::{self, GrantType},
         oauth::{
             token_requests::{self, CodeChallengeMethod},
             tokens::{self, ACCESS_KEY_EXPIRY, ACCESS_KEY_TYPE, REFRESH_KEY_EXPIRY},
         },
-        users,
+        user_tokens, users,
     },
     Db,
 };
@@ -22,6 +23,7 @@ use poem::{
     FromRequest, Request,
 };
 use poem_openapi::{
+    auth::ApiKey,
     param::Query,
     payload::{Json, Response},
     ApiResponse, Enum, Object, OpenApi,
@@ -33,11 +35,11 @@ use sha2::{Digest, Sha256};
 use url::Url;
 use uuid::Uuid;
 
-use super::{crypto::hashing, users::verify_password};
+use super::{crypto::hashing, users::verify_password, OptionalAuthUser};
 
 pub struct OauthApi;
 
-#[derive(Copy, Clone, Enum, Deserialize)]
+#[derive(Copy, Clone, Enum, Deserialize, PartialEq, Debug)]
 #[oai(rename_all = "snake_case")]
 enum ResponseType {
     Code,
@@ -54,6 +56,15 @@ impl ResponseType {
     }
 }
 
+#[derive(Object)]
+struct ImplicitGrantResponse {
+    access_token: String,
+    token_type: String,
+    expires_in: String,
+    scope: Option<String>,
+    state: Option<String>,
+}
+
 #[derive(ApiResponse)]
 enum AuthorizeResponse {
     #[oai(status = 404)]
@@ -62,8 +73,10 @@ enum AuthorizeResponse {
     GrantTypeNotAllowed,
     #[oai(status = 400)]
     InvalidRedirectUri,
-    #[oai(status = 303)]
+    #[oai(status = 307)]
     Redirect,
+    #[oai(status = 200)]
+    Token(Json<ImplicitGrantResponse>),
 }
 
 #[derive(ApiResponse)]
@@ -97,17 +110,49 @@ impl OauthApi {
     #[oai(path = "/authorize", method = "get")]
     async fn authorize(
         &self,
-        client_id: Path<Uuid>,
-        redirect_uri: Path<String>,
-        response_type: Path<ResponseType>,
+        response_type: Query<ResponseType>,
+        client_id: Query<Uuid>,
+        redirect_uri: Query<String>,
+        scope: Query<Option<String>>,
+        state: Query<Option<String>>,
+        code_challenge: Query<String>,
+        code_challenge_method: Query<Option<String>>,
+        request: &Request,
         db: Data<&Db>,
     ) -> Result<Response<AuthorizeResponse>> {
+        let token = request_session(request).and_then(|session| session.get::<String>("token"));
+
+        // ! Used for development until @michaljanocko fixes the SecurityScheme bullshit.
+        let user = match token {
+            Some(token) => user_tokens::find_by_value(token)
+                .find_also_related(models::users::Entity)
+                .one(&db.conn)
+                .await
+                .ok()
+                .flatten()
+                .map(|user_token| user_token.1),
+            None => None,
+        }
+        .flatten();
+
+        // Parse the redirect URI and check if it matches any of the URIs
+        // registered for the client
+        let mut redirect_uri =
+            Url::parse(&redirect_uri).map_err(|_| AuthorizeResponse::InvalidRedirectUri)?;
+
         // Check if the client exists
         let client = clients::find_by_id(*client_id)
             .one(&db.conn)
             .await
             .map_err(InternalServerError)?
             .ok_or(AuthorizeResponse::NotFound)?;
+
+        if !client.redirect_uris.iter().any(|uri| {
+            let uri = Url::parse(uri).unwrap();
+            redirect_uri == uri
+        }) {
+            return Ok(Response::new(AuthorizeResponse::InvalidRedirectUri));
+        }
 
         // Check if the client is allowed to use the grant type
         if !client
@@ -117,14 +162,96 @@ impl OauthApi {
             return Ok(Response::new(AuthorizeResponse::GrantTypeNotAllowed));
         }
 
-        // Parse the redirect URI and check if it matches any of the URIs
-        // registered for the client
-        let redirect_uri =
-            Url::parse(&redirect_uri).map_err(|_| AuthorizeResponse::InvalidRedirectUri)?;
+        let user = match user {
+            None => {
+                let mut login_page = Url::parse("http://localhost:8000").unwrap();
+                login_page
+                    .query_pairs_mut()
+                    .append_pair("client_id", client.id.to_string().as_str())
+                    .append_pair("return_to", request.original_uri().to_string().as_str());
 
-        // client.redirect_uris.iter()
+                return Ok(Response::new(AuthorizeResponse::Redirect)
+                    .header(header::LOCATION, login_page.to_string()));
+            }
+            Some(user) => user,
+        };
 
-        Ok(Response::new(AuthorizeResponse::Redirect).header(header::LOCATION, "/"))
+        if *response_type == ResponseType::Token {
+            let (access_token, access_token_expires_at) =
+                generate_access_token_jwt(&client.id, &user.id.to_string(), scope.deref().clone())?;
+
+            tokens::ActiveModel {
+                access_key: Set(access_token.clone()),
+                access_key_expires_at: Set(access_token_expires_at),
+
+                refresh_key: Set(None),
+                refresh_key_expires_at: Set(None),
+
+                client_id: Set(client.id),
+                user_id: Set(Some(user.id)),
+
+                ..tokens::ActiveModel::new()
+            }
+            .insert(&db.conn)
+            .await
+            .map_err(InternalServerError)?;
+
+            redirect_uri
+                .query_pairs_mut()
+                .append_pair("access_token", access_token.as_str())
+                .append_pair("expires_in", &ACCESS_KEY_EXPIRY.to_string())
+                .append_pair("token_type", ACCESS_KEY_TYPE);
+
+            if let Some(scope) = scope.deref() {
+                redirect_uri.query_pairs_mut().append_pair("scope", scope);
+            }
+
+            if let Some(state) = state.deref() {
+                redirect_uri.query_pairs_mut().append_pair("state", state);
+            }
+
+            return Ok(Response::new(AuthorizeResponse::Redirect)
+                .header(header::LOCATION, redirect_uri.to_string()));
+        }
+
+        let code_challenge_method = CodeChallengeMethod::from_str(
+            (*code_challenge_method)
+                .clone()
+                .unwrap_or("plain".to_string())
+                .as_str(),
+        )
+        .map_err(|_| TokenResponse::InvalidRequest)?;
+
+        let code = Alphanumeric.sample_string(&mut rand::thread_rng(), 32);
+
+        token_requests::ActiveModel {
+            code: Set(code.clone()),
+            redirect_uri: Set(redirect_uri.to_string()),
+
+            code_challenge: Set(code_challenge.clone()),
+            code_challenge_method: Set(code_challenge_method.to_string()),
+
+            client_id: Set(client.id.clone()),
+            user_id: Set(user.id.clone()),
+
+            ..token_requests::ActiveModel::new()
+        }
+        .insert(&db.conn)
+        .await
+        .map_err(InternalServerError)?;
+
+        redirect_uri
+            .query_pairs_mut()
+            .append_pair("code", code.as_str());
+
+        if let Some(state) = state.deref() {
+            redirect_uri
+                .query_pairs_mut()
+                .append_pair("state", state.as_str());
+        }
+
+        Ok(Response::new(AuthorizeResponse::Redirect)
+            .header(header::LOCATION, redirect_uri.to_string()))
     }
 
     #[oai(path = "/token", method = "post")]
@@ -154,7 +281,7 @@ struct TokenAuthCodeParams {
     redirect_uri: String,
     client_id: Uuid,
     client_secret: String,
-    code_verifier: Option<String>,
+    code_verifier: String,
 }
 
 async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<TokenResponse> {
@@ -184,34 +311,25 @@ async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<Token
         .map_err(InternalServerError)?
         .ok_or(TokenResponse::InvalidGrant)?;
 
-    match (token_request.code_challenge, params.code_verifier) {
-        (Some(code_challenge), Some(code_verifier)) => {
-            let code_challenge_method = CodeChallengeMethod::from_str(
-                token_request
-                    .code_challenge_method
-                    .unwrap_or("plain".to_string())
-                    .as_str(),
-            )
+    let code_challenge_method =
+        CodeChallengeMethod::from_str(token_request.code_challenge_method.as_str())
             .map_err(|_| TokenResponse::InvalidRequest)?;
 
-            let challenge_successful = match code_challenge_method {
-                CodeChallengeMethod::Plain => code_challenge == code_verifier,
-                CodeChallengeMethod::S256 => {
-                    let mut hasher = Sha256::new();
-                    hasher.update(code_verifier.as_bytes());
-                    let hashed_code_verifier = hasher.finalize();
+    let challenge_successful = match code_challenge_method {
+        CodeChallengeMethod::Plain => token_request.code_challenge == params.code_verifier,
+        CodeChallengeMethod::S256 => {
+            let mut hasher = Sha256::new();
+            hasher.update(params.code_verifier.as_bytes());
+            let hashed_code_verifier = hasher.finalize();
 
-                    let encoded_code_verifier = base64_url::encode(hashed_code_verifier.as_slice());
+            let encoded_code_verifier = base64_url::encode(hashed_code_verifier.as_slice());
 
-                    code_challenge == encoded_code_verifier
-                }
-            };
-
-            if !challenge_successful {
-                return Ok(TokenResponse::InvalidGrant);
-            }
+            token_request.code_challenge == encoded_code_verifier
         }
-        _ => return Ok(TokenResponse::InvalidRequest),
+    };
+
+    if !challenge_successful {
+        return Ok(TokenResponse::InvalidGrant);
     }
 
     let authorize_redirect_uri =
@@ -232,8 +350,11 @@ async fn create_token_with_auth_code(request: &Request, db: &Db) -> Result<Token
         access_key: Set(access_token.clone()),
         access_key_expires_at: Set(access_token_expires_at),
 
-        refresh_key: Set(refresh_token.clone()),
-        refresh_key_expires_at: Set(refresh_token_expires_at),
+        refresh_key: Set(Some(refresh_token.clone())),
+        refresh_key_expires_at: Set(Some(refresh_token_expires_at)),
+
+        client_id: Set(client.id),
+        user_id: Set(Some(token_request.user_id)),
 
         ..tokens::ActiveModel::new()
     }
@@ -301,11 +422,11 @@ async fn create_token_with_password(request: &Request, db: &Db) -> Result<TokenR
         access_key: Set(access_token.clone()),
         access_key_expires_at: Set(access_token_expires_at),
 
-        refresh_key: Set(refresh_token.clone()),
-        refresh_key_expires_at: Set(refresh_token_expires_at),
+        refresh_key: Set(Some(refresh_token.clone())),
+        refresh_key_expires_at: Set(Some(refresh_token_expires_at)),
 
         client_id: Set(client.id),
-        user_id: Set(user.id),
+        user_id: Set(Some(user.id)),
 
         ..tokens::ActiveModel::new()
     }
@@ -356,8 +477,11 @@ async fn create_token_with_client_creds(request: &Request, db: &Db) -> Result<To
         access_key: Set(access_token.clone()),
         access_key_expires_at: Set(access_token_expires_at),
 
-        refresh_key: Set(refresh_token.clone()),
-        refresh_key_expires_at: Set(refresh_token_expires_at),
+        refresh_key: Set(Some(refresh_token.clone())),
+        refresh_key_expires_at: Set(Some(refresh_token_expires_at)),
+
+        client_id: Set(client.id),
+        user_id: Set(None),
 
         ..tokens::ActiveModel::new()
     }
@@ -392,9 +516,11 @@ fn generate_access_token_jwt(
     sub: &String,
     scope: Option<String>,
 ) -> Result<(String, DateTime<Utc>)> {
-    let mut header = Header::new(Algorithm::RS256);
-
-    header.typ = Some("at+JWT".to_string());
+    let header = Header {
+        alg: Algorithm::HS512,
+        typ: Some("at+jwt".to_string()),
+        ..Default::default()
+    };
 
     let now = Utc::now();
     let expires_at = now + Duration::seconds(ACCESS_KEY_EXPIRY);
@@ -403,7 +529,7 @@ fn generate_access_token_jwt(
         // ! Figure out how to differentiate between instances.
         iss: "patrol".to_string(),
         aud: client_id.to_string(),
-        sub: sub.clone(),
+        sub: sub.to_string(),
         client_id: client_id.to_string(),
         scope,
         jti: Alphanumeric.sample_string(&mut rand::thread_rng(), 32),
@@ -414,8 +540,8 @@ fn generate_access_token_jwt(
     let token = encode(
         &header,
         &claims,
-        // ! Add the secret
-        &EncodingKey::from_secret("very_secret_secret".as_bytes()),
+        // TODO: Handle unwrap
+        &EncodingKey::from_secret(std::env::var("COOKIE_SECRET").unwrap().as_bytes()),
     )
     .map_err(InternalServerError)?;
 

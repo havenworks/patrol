@@ -92,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
         .nest("/api/openapi.json", spec)
         .nest_no_strip("/<(api|oauth)>", api)
         .nest("/", static_files::static_routes())
+        .data(Db { conn: conn.clone() })
         .with(CookieSession::new(
             CookieConfig::private(cookie_key)
                 .name("patrol_session")

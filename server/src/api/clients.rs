@@ -18,7 +18,7 @@ pub struct ClientApi;
 pub struct NewClient {
     name: String,
     homepage_url: Option<String>,
-    logo: Vec<u8>,
+    // logo: Vec<u8>,
     logo_uri: String,
 
     redirect_uris: Vec<String>,
@@ -68,7 +68,8 @@ impl ClientApi {
         let client = clients::ActiveModel {
             name: Set(new_client.name.clone()),
             homepage_url: Set(new_client.homepage_url.clone()),
-            logo: Set(new_client.logo.clone()),
+            // logo: Set(new_client.logo.clone()),
+            logo: Set(Vec::new()),
             logo_uri: Set(new_client.logo_uri.clone()),
 
             secret: Set(secret_hash),
