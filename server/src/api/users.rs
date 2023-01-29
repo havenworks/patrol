@@ -1,4 +1,4 @@
-use crate::models::{user_tokens, users_roles};
+use crate::models::{user_emails, user_tokens, users_roles};
 use crate::Db;
 use crate::{models::users, FirstAdminRegistered};
 
@@ -70,6 +70,11 @@ enum ChangePasswordResponse {
     Changed,
     #[oai(status = 401)]
     WrongPassword(Json<WrongPasswordData>),
+}
+
+#[derive(Object)]
+struct NewEmail {
+    email: String,
 }
 
 #[derive(Object, Deserialize)]
@@ -232,6 +237,26 @@ impl UserApi {
         }
 
         Err(anyhow!("Failed to logout").into())
+    }
+
+    #[oai(path = "/email", method = "post")]
+    async fn add_email(
+        &self,
+        user: AuthUser,
+        new_email: Json<NewEmail>,
+        db: Data<&Db>,
+    ) -> Result<()> {
+        user_emails::ActiveModel {
+            email: Set(new_email.email.clone()),
+            user_id: Set(user.0.id),
+
+            ..user_emails::ActiveModel::new()
+        }
+        .insert(&db.conn)
+        .await
+        .map_err(InternalServerError)?;
+
+        Ok(())
     }
 }
 
